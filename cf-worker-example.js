@@ -1,30 +1,21 @@
 /**
  * Cloudflare Worker：多机流量中心
- * - D1 自动初始化（无需手动执行 schema.sql）
+ * - D1 自动初始化（无需手动 schema.sql）
  * - 密码登录看板 + 配置面板（ttoken/tid/ttime/cftime）
- * - 添加 VPS 按钮生成一键命令
+ * - 添加 VPS：生成唯一独立密码，VPS 用此密码上报（不暴露全局 TG 密钥）
+ * - TG 汇总：看板「发送 TG 汇总」→ 聚合所有机器 → 发 Telegram
  * - D1 历史曲线 + Chart.js
  *
- * 部署：
- *   1. wrangler d1 create traffic-db
- *   2. wrangler secret put REPORT_TOKEN   # agent 上报用，也是 cftoken
- *   3. wrangler secret put DASH_PASSWORD  # 看板登录密码
- *   4. 填入 wrangler.toml 的 database_id 后 wrangler deploy
- *
- * wrangler.toml：
- *   name = "traffic-dashboard"
- *   main = "cf-worker-example.js"
- *   compatibility_date = "2024-11-01"
- *   [[d1_databases]]
- *   binding = "DB"
- *   database_name = "traffic-db"
- *   database_id = "粘贴你的 D1 ID"
+ * 部署：Cloudflare Dashboard 网页操作
+ *   1. 创建 D1 数据库 traffic-db
+ *   2. 创建 Worker，粘贴此代码
+ *   3. Worker 设置 → 绑定 D1（变量名 DB）
+ *   4. Worker 设置 → 加密变量 REPORT_TOKEN（备选）/ DASH_PASSWORD
+ *   5. 部署
  */
 
 const SESSION_TTL = 60 * 60 * 24 * 7;
 const COOKIE_NAME = "dash_session";
-
-// ─── 工具函数 ───
 
 const json = (data, status = 200, extra = {}) =>
   new Response(JSON.stringify(data), {
@@ -44,10 +35,8 @@ function gb(n) {
 
 function esc(s) {
   return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function reportAuth(req, env) {
@@ -86,8 +75,7 @@ async function verifySessionToken(token, env) {
   if (i < 0) return false;
   const rnd = token.slice(0, i);
   const sig = token.slice(i + 1);
-  const expect = await sha256Hex(`${rnd}:${env.DASH_PASSWORD}:dash`);
-  return sig === expect && rnd.length >= 32;
+  return sig === (await sha256Hex(`${rnd}:${env.DASH_PASSWORD}:dash`)) && rnd.length >= 32;
 }
 
 function sessionCookie(token, maxAge = SESSION_TTL) {
@@ -109,23 +97,21 @@ async function ensureSchema(env) {
         machine_id TEXT PRIMARY KEY, hostname TEXT, interface TEXT,
         last_ts INTEGER, today_rx INTEGER, today_tx INTEGER,
         month_rx INTEGER, month_tx INTEGER, updated_at INTEGER
-      )`
-    ),
+      )`),
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT NOT NULL,
         ts INTEGER NOT NULL, today_rx INTEGER, today_tx INTEGER,
         month_rx INTEGER, month_tx INTEGER
-      )`
-    ),
+      )`),
     env.DB.prepare(
-      `CREATE INDEX IF NOT EXISTS idx_snap_mid_ts ON snapshots(machine_id, ts)`
-    ),
+      `CREATE INDEX IF NOT EXISTS idx_snap_mid_ts ON snapshots(machine_id, ts)`),
     env.DB.prepare(
-      `CREATE TABLE IF NOT EXISTS config (
-        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER
-      )`
-    ),
+      `CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER)`),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS vps_tokens (
+        machine_id TEXT PRIMARY KEY, token TEXT NOT NULL, created_at INTEGER
+      )`),
   ]);
 }
 
@@ -150,7 +136,7 @@ async function upsertReport(env, rec) {
     Number(month.rx) || 0, Number(month.tx) || 0, now
   ).run();
 
-  // 节流：同一机器 5 分钟内只写 1 条历史
+  // 节流写历史（5 分钟窗口）
   const last = await env.DB.prepare(
     `SELECT ts FROM snapshots WHERE machine_id = ? ORDER BY ts DESC LIMIT 1`
   ).bind(mid).first();
@@ -159,8 +145,7 @@ async function upsertReport(env, rec) {
       `INSERT INTO snapshots (machine_id, ts, today_rx, today_tx, month_rx, month_tx)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(mid, ts, Number(today.rx) || 0, Number(today.tx) || 0,
-      Number(month.rx) || 0, Number(month.tx) || 0
-    ).run();
+      Number(month.rx) || 0, Number(month.tx) || 0).run();
   }
 
   // 清理 90 天前
@@ -200,15 +185,45 @@ async function saveConfig(env, data) {
   if (!env.DB) return;
   const now = Math.floor(Date.now() / 1000);
   const keys = ["ttoken", "tid", "ttime", "cftime"];
-  const stmts = keys
-    .filter((k) => data[k] !== undefined)
-    .map((k) =>
-      env.DB.prepare(
-        `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-      ).bind(k, String(data[k]), now)
-    );
+  const stmts = keys.filter(k => data[k] !== undefined).map(k =>
+    env.DB.prepare(
+      `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(k, String(data[k]), now)
+  );
   if (stmts.length) await env.DB.batch(stmts);
+}
+
+// ─── VPS Token 管理 ───
+
+async function getOrCreateVpsToken(env, mid) {
+  const existing = await env.DB.prepare(
+    `SELECT token FROM vps_tokens WHERE machine_id = ?`
+  ).bind(mid).first();
+  if (existing) return existing.token;
+
+  // 生成 32 字节 hex token
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  const token = Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
+
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO vps_tokens (machine_id, token, created_at) VALUES (?, ?, ?)`
+  ).bind(mid, token, now).run();
+  return token;
+}
+
+async function verifyVpsToken(env, mid, token) {
+  const row = await env.DB.prepare(
+    `SELECT token FROM vps_tokens WHERE machine_id = ?`
+  ).bind(mid).first();
+  if (!row) return false;
+  return row.token === token;
+}
+
+async function deleteVpsToken(env, mid) {
+  await env.DB.prepare(`DELETE FROM vps_tokens WHERE machine_id = ?`).bind(mid).run();
 }
 
 // ─── 生成一键命令 ───
@@ -217,23 +232,105 @@ async function generateCommand(env, request, mid) {
   const cfg = await getConfig(env);
   const url = new URL(request.url);
   const cfurl = url.origin + "/api/report";
-  const cftoken = env.REPORT_TOKEN || "";
-  const ttoken = cfg.ttoken || "";
-  const tid = cfg.tid || "";
-  const ttime = cfg.ttime || "20:00:00";
+
+  // 生成/获取独立 token
+  const vpsToken = await getOrCreateVpsToken(env, mid);
+
+  // cftime 默认每小时
   const cftime = cfg.cftime || "0 * * * *";
 
-  if (!ttoken) return { ok: false, error: "请先在设置页面配置 ttoken（Telegram Bot Token）" };
-  if (!tid) return { ok: false, error: "请先在设置页面配置 tid（Telegram Chat ID）" };
-  if (!cftoken) return { ok: false, error: "缺少 REPORT_TOKEN 环境变量，请执行 wrangler secret put REPORT_TOKEN" };
-  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) return { ok: false, error: "机器 ID 应为 1-64 位字母数字及 ._-: 组合" };
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+    return { ok: false, error: "机器 ID 应为 1-64 位字母数字及 ._-: 组合" };
+  }
 
-  const cmd = `ttoken='${ttoken}' tid='${tid}' ttime='${ttime}' \\\ncftime='${cftime}' \\\ncfurl='${cfurl}' \\\ncftoken='${cftoken}' \\\nmid='${mid}' \\\n  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')`;
+  // 命令不含 ttoken/tid — VPS 只上报 CF，TG 从看板汇总
+  const cmd = `mid='${mid}' \\
+cftoken='${vpsToken}' \\
+cfurl='${cfurl}' \\
+cftime='${cftime}' \\
+  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')`;
 
-  return { ok: true, command: cmd, machine_id: mid };
+  return {
+    ok: true,
+    command: cmd,
+    machine_id: mid,
+    token: vpsToken.slice(0, 8) + "...", // 只展示前缀
+  };
 }
 
-// ─── 登录页 ───
+// ─── TG 汇总 ───
+
+async function tgSummary(env) {
+  const cfg = await getConfig(env);
+  const ttoken = cfg.ttoken || "";
+  const tid = cfg.tid || "";
+  if (!ttoken || !tid) {
+    return { ok: false, error: "请在设置页配置 ttoken 和 tid" };
+  }
+
+  const machines = await listMachines(env);
+  if (!machines.length) {
+    return { ok: false, error: "暂无机器数据" };
+  }
+
+  // 汇总统计
+  const total = machines.reduce((a, m) => ({
+    today_rx: a.today_rx + (m.today?.rx || 0),
+    today_tx: a.today_tx + (m.today?.tx || 0),
+    month_rx: a.month_rx + (m.month?.rx || 0),
+    month_tx: a.month_tx + (m.month?.tx || 0),
+    online: a.online + (m.ts && (Date.now() / 1000 - m.ts) < 7200 ? 1 : 0),
+  }), { today_rx: 0, today_tx: 0, month_rx: 0, month_tx: 0, online: 0 });
+
+  const now = new Date();
+  const dateStr = now.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+
+  // 每台机器单行
+  const lines = machines.slice(0, 20).map(m => {
+    const online = m.ts && (Date.now() / 1000 - m.ts) < 7200 ? "●" : "○";
+    const t = m.today || {};
+    const mo = m.month || {};
+    return `${online} ${m.machine_id || "?"}  入${gb(t.rx)}/出${gb(t.tx)}  月${gb(mo.rx)}/出${gb(mo.tx)}`;
+  }).join("\n");
+
+  const more = machines.length > 20 ? `\n...及其他 ${machines.length - 20} 台` : "";
+
+  const msg = `📊 流量汇总
+━━━━━━━━━━━━━━━━━━━━
+主机数：${machines.length} 台（在线 ${total.online}）
+时间：${dateStr}
+
+今日总计：入 ${gb(total.today_rx)} / 出 ${gb(total.today_tx)} / 合计 ${gb(total.today_rx + total.today_tx)}
+本月总计：入 ${gb(total.month_rx)} / 出 ${gb(total.month_tx)} / 合计 ${gb(total.month_rx + total.month_tx)}
+━━━━━━━━━━━━━━━━━━━━
+${lines}${more}`;
+
+  // 发送到 Telegram
+  const apiUrl = `https://api.telegram.org/bot${ttoken}/sendMessage`;
+  const resp = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      chat_id: tid,
+      text: msg,
+      disable_web_page_preview: "true",
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    return { ok: false, error: `Telegram API 错误: ${text.slice(0, 200)}` };
+  }
+
+  const rj = await resp.json();
+  if (!rj.ok) {
+    return { ok: false, error: rj.description || "Telegram 返回失败" };
+  }
+
+  return { ok: true, machines: machines.length, online: total.online };
+}
+
+// ─── 页面 ───
 
 function loginPage(err = "") {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -263,8 +360,6 @@ button{width:100%;padding:10px 12px;border:0;border-radius:8px;background:#3b82f
 </div>`;
 }
 
-// ─── 主看板（SPA） ───
-
 function dashboardPage() {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -283,11 +378,11 @@ header h1{font-size:18px;margin:0}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 select,button{background:#121a2b;color:#e8eefc;border:1px solid #33415f;border-radius:8px;padding:8px 10px;font-size:13px;outline:none}
 button{cursor:pointer}
-button:active{opacity:.8}
 button.primary{background:#3b82f6;border-color:#3b82f6;font-weight:600}
 button.primary:hover{background:#2563eb}
-button.danger{background:#dc2626;border-color:#dc2626}
 button.green{background:#16a34a;border-color:#16a34a;font-weight:600}
+button.green:hover{background:#15803d}
+button.warn{background:#d97706;border-color:#d97706;font-weight:600}
 main{padding:16px 20px 40px;max-width:1200px;margin:0 auto}
 .page{display:none}
 .page.active{display:block}
@@ -305,29 +400,28 @@ tr{cursor:pointer}
 tr.active{background:#1a2740}
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:#1e3a5f;color:#93c5fd}
 .badge.off{background:#3f1d1d;color:#fca5a5}
-/* 设置页 */
 .settings-form{max-width:520px}
 .settings-form label{display:block;font-size:12px;color:#9fb3d9;margin:14px 0 4px}
 .settings-form input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #33415f;background:#0b1220;color:#e8eefc;outline:none}
 .settings-form input:focus{border-color:#3b82f6}
 .settings-form .hint{font-size:11px;color:#8aa0c6;margin-top:2px}
 .settings-form .save-row{display:flex;gap:8px;align-items:center;margin-top:18px}
-.settings-form .save-row button{padding:10px 20px}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a2740;border:1px solid #33415f;border-radius:10px;padding:10px 20px;font-size:13px;z-index:999;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
-/* Modal */
 .modal-overlay{position:fixed;inset:0;background:#0006;display:none;place-items:center;z-index:100}
 .modal-overlay.open{display:grid}
 .modal{background:#121a2b;border:1px solid #33415f;border-radius:14px;padding:24px;width:min(640px,94vw);max-height:80vh;overflow-y:auto}
 .modal h2{font-size:16px;margin:0 0 4px}
 .modal .desc{font-size:12px;color:#8aa0c6;margin-bottom:16px}
 .modal label{display:block;font-size:12px;color:#9fb3d9;margin-bottom:4px}
-.modal input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #33415f;background:#0b1220;color:#e8eefc;outline:none}
+.modal input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #33415f;background:#0b1220;color:#e8eefc;outline:none;margin-bottom:8px}
 .modal input:focus{border-color:#3b82f6}
-.modal .btn-row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.modal .btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 .modal .btn-row button{flex:1;min-width:80px;padding:10px}
-.cmd-box{background:#0b1220;border:1px solid #33415f;border-radius:8px;padding:12px;margin:12px 0;font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:#c7d2fe;max-height:240px;overflow-y:auto}
-.cmd-ok{color:#34d399;font-size:13px;display:flex;gap:8px;align-items:center}
+.cmd-box{background:#0b1220;border:1px solid #33415f;border-radius:8px;padding:12px;margin:12px 0;font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:#c7d2fe;max-height:240px;overflow-y:auto;user-select:all}
+.cmd-ok{color:#34d399;font-size:13px;margin:8px 0 4px;display:flex;gap:8px;align-items:center}
+.token-preview{color:#8aa0c6;font-size:11px}
+.tg-summary-result{background:#0b1220;border:1px solid #243049;border-radius:8px;padding:12px;margin-top:8px;font-size:12px;white-space:pre-wrap;line-height:1.5}
 </style>
 
 <header>
@@ -339,6 +433,7 @@ tr.active{background:#1a2740}
     </div>
   </div>
   <div class="actions">
+    <button class="warn" onclick="sendTgSummary()" id="btnTgSum" title="向 Telegram 发送所有机器汇总">📊 TG 汇总</button>
     <form method="post" action="/logout" style="margin:0"><button type="submit">退出</button></form>
   </div>
 </header>
@@ -355,10 +450,11 @@ tr.active{background:#1a2740}
         <option value="720">30 天</option>
       </select>
       <button onclick="refresh()">刷新</button>
+      <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>
     <div class="panel">
-      <h2>历史曲线 · 今日累计（字节→GB）</h2>
+      <h2>历史曲线 · 今日累计（GB）</h2>
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
     <div class="panel">
@@ -379,22 +475,22 @@ tr.active{background:#1a2740}
   <div id="pageSettings" class="page">
     <div class="panel settings-form">
       <h2>全局配置</h2>
-      <p class="muted" style="font-size:12px">保存后可在看板页「添加 VPS」一键生成安装命令</p>
-      <label for="s_ttoken">Telegram Bot Token</label>
+      <p class="muted" style="font-size:12px">保存后可在看板页「添加 VPS」一键生成安装命令。<br>TG 配置用于看板顶部的「📊 TG 汇总」按钮发送聚合日报。</p>
+      <label for="s_ttoken">Telegram Bot Token（汇总用）</label>
       <input id="s_ttoken" type="password" placeholder="123456:ABCdef...">
-      <div class="hint">agent 发 TG 日报用</div>
+      <div class="hint">Worker 汇总 TG 消息所需的 Bot Token</div>
 
       <label for="s_tid">Telegram Chat ID</label>
       <input id="s_tid" type="text" placeholder="-1001234567890">
-      <div class="hint">接收日报的 TG 会话 ID</div>
+      <div class="hint">接收汇总日报的 TG 会话 ID</div>
 
       <label for="s_ttime">TG 汇报时间</label>
       <input id="s_ttime" type="text" placeholder="20:00:00">
-      <div class="hint">HH:MM:SS 格式，默认 20:00:00</div>
+      <div class="hint">HH:MM:SS 格式，默认 20:00:00（暂未定时，需手动点 TG 汇总）</div>
 
-      <label for="s_cftime">CF 汇报 cron</label>
+      <label for="s_cftime">CF 上报 cron（VPS 端默认）</label>
       <input id="s_cftime" type="text" placeholder="0 * * * *">
-      <div class="hint">5 段 cron，默认 0 * * * *（每小时）</div>
+      <div class="hint">5 段 cron，默认 0 * * * *（每小时），新 VPS 命令会使用此值</div>
 
       <div class="save-row">
         <button class="primary" onclick="saveConfig()">保存设置</button>
@@ -408,12 +504,13 @@ tr.active{background:#1a2740}
 <div class="modal-overlay" id="modalVps">
   <div class="modal">
     <h2>添加 VPS</h2>
-    <p class="desc">输入机器 ID 后点击生成，复制命令到 VPS 执行即可</p>
+    <p class="desc">输入机器 ID，生成独立密码和安装命令。复制到 VPS 执行即可。</p>
     <label for="vpsMid">机器 ID</label>
     <input id="vpsMid" type="text" placeholder="hk-1 / jp-2 / us-west" autocomplete="off">
     <div id="vpsCmdRegion" style="display:none">
       <div class="cmd-ok" id="vpsOk"></div>
       <div class="cmd-box" id="vpsCmd"></div>
+      <p class="token-preview" id="vpsTokenPreview"></p>
       <div class="btn-row">
         <button class="primary" onclick="copyCmd()">复制命令</button>
         <button onclick="closeAddVps()">关闭</button>
@@ -430,39 +527,37 @@ tr.active{background:#1a2740}
 <div class="toast" id="toast"></div>
 
 <script>
-const gb = (n) => ((Number(n)||0)/1e9).toFixed(3) + 'GB';
-const fmtTime = (ts) => ts ? new Date(ts*1000).toLocaleString() : '-';
+const gb = (n) => ((Number(n)||0)/1e9).toFixed(3) + "GB";
+const fmtTime = (ts) => ts ? new Date(ts*1000).toLocaleString() : "-";
 let machines = [];
 let selected = null;
 let chart;
 
-// ─── 页面切换 ───
 function switchTab(name) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
-  document.getElementById('page' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
-  document.getElementById('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
-  if (name === 'settings') loadConfig();
-  if (name === 'dash') refresh();
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".nav a").forEach(a => a.classList.remove("active"));
+  const pname = name[0].toUpperCase() + name.slice(1);
+  document.getElementById("page" + pname).classList.add("active");
+  document.getElementById("tab" + pname).classList.add("active");
+  if (name === "settings") loadConfig();
+  if (name === "dash") refresh();
 }
 
-// ─── API ───
 async function api(path, opts) {
-  const r = await fetch(path, { credentials: 'same-origin', ...opts });
-  if (r.status === 401) { location.href = '/login'; throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+  const r = await fetch(path, { credentials: "same-origin", ...opts });
+  if (r.status === 401) { location.href = "/login"; return null; }
+  if (!r.ok) throw new Error(((await r.json().catch(()=>({}))).error) || r.statusText);
   return r.json();
 }
 
 function toast(msg) {
-  const el = document.getElementById('toast');
+  const el = document.getElementById("toast");
   el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3000);
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 3000);
 }
 
-// ─── 看板 ───
-function online(ts) { return ts && ((Date.now()/1000 - ts) < 2*3600); }
+function online(ts) { return ts && ((Date.now()/1000 - ts) < 7200); }
 
 function renderSummary() {
   const sum = machines.reduce((a,m)=>({
@@ -470,59 +565,59 @@ function renderSummary() {
     month_rx: a.month_rx + (m.month?.rx||0), month_tx: a.month_tx + (m.month?.tx||0),
   }), {today_rx:0,today_tx:0,month_rx:0,month_tx:0});
   const on = machines.filter(m => online(m.ts)).length;
-  document.getElementById('summary').innerHTML = \`
-    <div class="card"><div class="label">机器数</div><div class="val">${machines.length}</div></div>
-    <div class="card"><div class="label">在线（2h）</div><div class="val">${on}</div></div>
-    <div class="card"><div class="label">今日合计</div><div class="val">${gb(sum.today_rx+sum.today_tx)}</div></div>
-    <div class="card"><div class="label">本月合计</div><div class="val">${gb(sum.month_rx+sum.month_tx)}</div></div>\`;
+  document.getElementById("summary").innerHTML = [
+    '<div class="card"><div class="label">机器数</div><div class="val">' + machines.length + "</div></div>",
+    '<div class="card"><div class="label">在线（2h）</div><div class="val">' + on + "</div></div>",
+    '<div class="card"><div class="label">今日合计</div><div class="val">' + gb(sum.today_rx+sum.today_tx) + "</div></div>",
+    '<div class="card"><div class="label">本月合计</div><div class="val">' + gb(sum.month_rx+sum.month_tx) + "</div></div>",
+  ].join("");
 }
 
 function renderTable() {
-  const tb = document.getElementById('tbody');
+  const tb = document.getElementById("tbody");
   if (!machines.length) { tb.innerHTML = '<tr><td colspan="7">暂无数据</td></tr>'; return; }
   tb.innerHTML = machines.map(m => {
-    const active = m.machine_id === selected ? 'active' : '';
+    const active = m.machine_id === selected ? "active" : "";
     const st = online(m.ts) ? '<span class="badge">在线</span>' : '<span class="badge off">离线</span>';
-    return '<tr class="' + active + '" data-mid="' + (m.machine_id||'') + '">' +
-      '<td>' + (m.machine_id||'') + '</td><td>' + (m.hostname||'') + '</td><td>' + (m.interface||'') + '</td>' +
-      '<td>' + gb(m.today?.rx) + ' / ' + gb(m.today?.tx) + '</td>' +
-      '<td>' + gb(m.month?.rx) + ' / ' + gb(m.month?.tx) + '</td>' +
-      '<td>' + fmtTime(m.ts) + '</td><td>' + st + '</td></tr>';
-  }).join('');
-  tb.querySelectorAll('tr[data-mid]').forEach(tr => {
-    tr.addEventListener('click', () => { selected = tr.dataset.mid; renderTable(); loadHistory(); });
+    return '<tr class="' + active + '" data-mid="' + esc(m.machine_id||"") + '">' +
+      "<td>" + esc(m.machine_id||"") + '</td><td>' + esc(m.hostname||"") + '</td><td>' + esc(m.interface||"") + "</td>" +
+      "<td>" + gb(m.today?.rx) + " / " + gb(m.today?.tx) + "</td>" +
+      "<td>" + gb(m.month?.rx) + " / " + gb(m.month?.tx) + "</td>" +
+      "<td>" + fmtTime(m.ts) + "</td><td>" + st + "</td></tr>";
+  }).join("");
+  tb.querySelectorAll("tr[data-mid]").forEach(tr => {
+    tr.addEventListener("click", () => { selected = tr.dataset.mid; renderTable(); loadHistory(); });
   });
 }
 
 async function loadHistory() {
   if (!selected) return;
-  const hours = document.getElementById('range').value;
-  const data = await api('/api/history?mid=' + encodeURIComponent(selected) + '&hours=' + hours);
+  const hours = document.getElementById("range").value;
+  const data = await api("/api/history?mid=" + encodeURIComponent(selected) + "&hours=" + hours);
   const pts = data.points || [];
   const labels = pts.map(p => { const d = new Date(p.ts*1000); return d.toLocaleString(); });
   const rx = pts.map(p => (Number(p.today_rx)||0)/1e9);
   const tx = pts.map(p => (Number(p.today_tx)||0)/1e9);
   const total = pts.map((p,i) => rx[i]+tx[i]);
-  const ctx = document.getElementById('chart');
+  const ctx = document.getElementById("chart");
   if (chart) chart.destroy();
   chart = new Chart(ctx, {
-    type: 'line',
+    type: "line",
     data: { labels, datasets: [
-      { label: '今日入站 GB', data: rx, borderColor: '#60a5fa', tension: 0.25, pointRadius: 0, borderWidth: 2 },
-      { label: '今日出站 GB', data: tx, borderColor: '#34d399', tension: 0.25, pointRadius: 0, borderWidth: 2 },
-      { label: '今日合计 GB', data: total, borderColor: '#fbbf24', tension: 0.25, pointRadius: 0, borderWidth: 2 },
+      { label: "今日入站 GB", data: rx, borderColor: "#60a5fa", tension: 0.25, pointRadius: 0, borderWidth: 2 },
+      { label: "今日出站 GB", data: tx, borderColor: "#34d399", tension: 0.25, pointRadius: 0, borderWidth: 2 },
+      { label: "今日合计 GB", data: total, borderColor: "#fbbf24", tension: 0.25, pointRadius: 0, borderWidth: 2 },
     ]},
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-      scales: { x: { ticks: { maxTicksLimit: 8, color: '#8aa0c6' }, grid: { color: '#1e2a42' } },
-        y: { ticks: { color: '#8aa0c6' }, grid: { color: '#1e2a42' }, title: { display: true, text: 'GB', color: '#8aa0c6' } } },
-      plugins: { legend: { labels: { color: '#c7d2fe' } }, title: { display: true, text: selected, color: '#e8eefc' } }
-    }
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      scales: { x: { ticks: { maxTicksLimit: 8, color: "#8aa0c6" }, grid: { color: "#1e2a42" } },
+        y: { ticks: { color: "#8aa0c6" }, grid: { color: "#1e2a42" }, title: { display: true, text: "GB", color: "#8aa0c6" } } },
+      plugins: { legend: { labels: { color: "#c7d2fe" } }, title: { display: true, text: selected, color: "#e8eefc" } } }
   });
 }
 
 async function refresh() {
-  const data = await api('/api/machines');
-  machines = data.machines || [];
+  const data = await api("/api/machines");
+  machines = (data && data.machines) || [];
   if (!selected && machines[0]) selected = machines[0].machine_id;
   if (selected && !machines.find(m => m.machine_id === selected)) selected = machines[0]?.machine_id || null;
   renderSummary();
@@ -530,35 +625,63 @@ async function refresh() {
   await loadHistory();
 }
 
+// ─── TG 汇总 ───
+async function sendTgSummary() {
+  const btn = document.getElementById("btnTgSum");
+  const st = document.getElementById("tgSumStatus");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "发送中…";
+  st.textContent = "";
+  try {
+    const data = await api("/api/tg-summary", { method: "POST" });
+    if (!data || !data.ok) {
+      st.textContent = "✗ " + (data?.error || "失败");
+      toast("TG 汇总发送失败：" + (data?.error || "未知错误"));
+    } else {
+      st.textContent = "✓ 已发送（" + data.machines + "台，在线" + data.online + "）";
+      toast("TG 汇总已发送！");
+    }
+  } catch(e) {
+    st.textContent = "✗ " + e.message;
+    toast("发送失败：" + e.message);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+    setTimeout(() => { st.textContent = ""; }, 6000);
+  }
+}
+
 // ─── 设置 ───
 async function loadConfig() {
-  const data = await api('/api/config');
-  document.getElementById('s_ttoken').value = data.ttoken || '';
-  document.getElementById('s_tid').value = data.tid || '';
-  document.getElementById('s_ttime').value = data.ttime || '20:00:00';
-  document.getElementById('s_cftime').value = data.cftime || '0 * * * *';
+  const data = await api("/api/config");
+  if (!data) return;
+  document.getElementById("s_ttoken").value = data.ttoken || "";
+  document.getElementById("s_tid").value = data.tid || "";
+  document.getElementById("s_ttime").value = data.ttime || "20:00:00";
+  document.getElementById("s_cftime").value = data.cftime || "0 * * * *";
 }
 
 async function saveConfig() {
-  const btn = document.querySelector('.save-row .primary');
+  const btn = document.querySelector(".save-row .primary");
   btn.disabled = true;
   const orig = btn.textContent;
-  btn.textContent = '保存中…';
+  btn.textContent = "保存中…";
   try {
-    await api('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await api("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ttoken: document.getElementById('s_ttoken').value.trim(),
-        tid: document.getElementById('s_tid').value.trim(),
-        ttime: document.getElementById('s_ttime').value.trim() || '20:00:00',
-        cftime: document.getElementById('s_cftime').value.trim() || '0 * * * *',
+        ttoken: document.getElementById("s_ttoken").value.trim(),
+        tid: document.getElementById("s_tid").value.trim(),
+        ttime: document.getElementById("s_ttime").value.trim() || "20:00:00",
+        cftime: document.getElementById("s_cftime").value.trim() || "0 * * * *",
       }),
     });
-    document.getElementById('saveStatus').textContent = '✓ 已保存';
-    setTimeout(() => document.getElementById('saveStatus').textContent = '', 3000);
+    document.getElementById("saveStatus").textContent = "✓ 已保存";
+    setTimeout(() => document.getElementById("saveStatus").textContent = "", 3000);
   } catch(e) {
-    toast('保存失败：' + e.message);
+    toast("保存失败：" + e.message);
   } finally {
     btn.textContent = orig;
     btn.disabled = false;
@@ -567,62 +690,58 @@ async function saveConfig() {
 
 // ─── 添加 VPS ───
 function openAddVps() {
-  document.getElementById('modalVps').classList.add('open');
-  document.getElementById('vpsMid').value = '';
-  document.getElementById('vpsCmdRegion').style.display = 'none';
-  document.getElementById('vpsBtnRegion').style.display = 'flex';
-  document.getElementById('vpsMid').focus();
+  document.getElementById("modalVps").classList.add("open");
+  document.getElementById("vpsMid").value = "";
+  document.getElementById("vpsCmdRegion").style.display = "none";
+  document.getElementById("vpsBtnRegion").style.display = "flex";
+  document.getElementById("vpsMid").focus();
 }
 
 function closeAddVps() {
-  document.getElementById('modalVps').classList.remove('open');
+  document.getElementById("modalVps").classList.remove("open");
 }
 
 async function genCmd() {
-  const mid = document.getElementById('vpsMid').value.trim();
-  if (!mid) { toast('请输入机器 ID'); return; }
-  const btn = document.querySelector('#vpsBtnRegion .green');
-  btn.disabled = true; btn.textContent = '生成中…';
+  const mid = document.getElementById("vpsMid").value.trim();
+  if (!mid) { toast("请输入机器 ID"); return; }
+  const btn = document.querySelector("#vpsBtnRegion .green");
+  btn.disabled = true; btn.textContent = "生成中…";
   try {
-    const data = await api('/api/generate?mid=' + encodeURIComponent(mid));
-    if (!data.ok) { toast(data.error || '生成失败'); return; }
-    document.getElementById('vpsOk').textContent = '✓ 命令已生成，复制到 VPS 执行';
-    document.getElementById('vpsCmd').textContent = data.command;
-    document.getElementById('vpsCmdRegion').style.display = 'block';
-    document.getElementById('vpsBtnRegion').style.display = 'none';
+    const data = await api("/api/generate?mid=" + encodeURIComponent(mid));
+    if (!data || !data.ok) { toast(data?.error || "生成失败"); return; }
+    document.getElementById("vpsOk").textContent = "✓ 命令已生成（独立密码： " + (data.token||"") + "）";
+    document.getElementById("vpsCmd").textContent = data.command;
+    document.getElementById("vpsTokenPreview").textContent = "每台 VPS 有独立的随机密码，此密码只需在生成时使用，D1 中安全存储。";
+    document.getElementById("vpsCmdRegion").style.display = "block";
+    document.getElementById("vpsBtnRegion").style.display = "none";
   } catch(e) {
-    toast('生成失败：' + e.message);
+    toast("生成失败：" + e.message);
   } finally {
-    btn.disabled = false; btn.textContent = '生成命令';
+    btn.disabled = false; btn.textContent = "生成命令";
   }
 }
 
 async function copyCmd() {
   try {
-    await navigator.clipboard.writeText(document.getElementById('vpsCmd').textContent);
-    toast('已复制到剪贴板');
+    await navigator.clipboard.writeText(document.getElementById("vpsCmd").textContent);
+    toast("已复制到剪贴板");
   } catch {
-    // fallback
     const r = document.createRange();
-    r.selectNode(document.getElementById('vpsCmd'));
+    r.selectNode(document.getElementById("vpsCmd"));
     window.getSelection().removeAllRanges();
     window.getSelection().addRange(r);
-    document.execCommand('copy');
-    toast('已复制（请 Ctrl+C 备份）');
+    document.execCommand("copy");
+    toast("已复制");
   }
 }
 
-// 点击 modal 外部关闭
-document.getElementById('modalVps').addEventListener('click', e => {
+document.getElementById("modalVps").addEventListener("click", e => {
   if (e.target === e.currentTarget) closeAddVps();
 });
-
-// 回车触发生成
-document.getElementById('vpsMid').addEventListener('keydown', e => {
-  if (e.key === 'Enter') genCmd();
+document.getElementById("vpsMid").addEventListener("keydown", e => {
+  if (e.key === "Enter") genCmd();
 });
 
-// 初始化
 refresh();
 </script>`;
 }
@@ -633,19 +752,27 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
 
-    // 自动初始化表结构（幂等）
-    if (env.DB) {
-      try { await ensureSchema(env); } catch { /* 忽略竞争 */ }
-    }
+    // 自动初始化
+    if (env.DB) { try { await ensureSchema(env); } catch {} }
 
     // POST /api/report — agent 上报
     if (req.method === "POST" && url.pathname === "/api/report") {
-      if (!reportAuth(req, env)) return json({ ok: false, error: "unauthorized" }, 401);
       if (!env.DB) return json({ ok: false, error: "DB not bound" }, 500);
       let body;
       try { body = await req.json(); } catch { return json({ ok: false, error: "invalid json" }, 400); }
       const mid = body.machine_id || req.headers.get("x-machine-id");
-      if (!mid || !/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) return json({ ok: false, error: "machine_id invalid" }, 400);
+      if (!mid || !/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+        return json({ ok: false, error: "machine_id invalid" }, 400);
+      }
+
+      // 优先用 REPORT_TOKEN（全局，向后兼容），其次校验每台 VPS 独立密码
+      if (!reportAuth(req, env)) {
+        const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+        if (!token || !(await verifyVpsToken(env, mid, token))) {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+      }
+
       await upsertReport(env, { ...body, machine_id: mid });
       return json({ ok: true });
     }
@@ -670,19 +797,19 @@ export default {
       return new Response(null, { status: 302, headers: { Location: "/login", "Set-Cookie": sessionCookie("", 0) } });
     }
 
-    // 以下路由需登录
+    // 以下需登录
     if (!(await requireDash(req, env))) {
       if (url.pathname.startsWith("/api/")) return json({ ok: false, error: "unauthorized" }, 401);
       return Response.redirect(new URL("/login", url).toString(), 302);
     }
 
-    // GET /api/machines — 机器列表
+    // GET /api/machines
     if (req.method === "GET" && url.pathname === "/api/machines") {
       if (!env.DB) return json({ ok: true, machines: [] });
       return json({ ok: true, machines: await listMachines(env) });
     }
 
-    // GET /api/history — 历史曲线
+    // GET /api/history
     if (req.method === "GET" && url.pathname === "/api/history") {
       if (!env.DB) return json({ ok: true, points: [] });
       const mid = url.searchParams.get("mid") || "";
@@ -691,24 +818,16 @@ export default {
       return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
     }
 
-    // GET /api/config — 读配置
+    // GET /api/config / POST /api/config
     if (req.method === "GET" && url.pathname === "/api/config") {
-      const cfg = await getConfig(env);
-      return json({ ok: true, ...cfg });
+      return json({ ok: true, ...(await getConfig(env)) });
     }
-
-    // POST /api/config — 写配置
     if (req.method === "POST" && url.pathname === "/api/config") {
-      try {
-        const body = await req.json();
-        await saveConfig(env, body);
-        return json({ ok: true });
-      } catch (e) {
-        return json({ ok: false, error: String(e) }, 400);
-      }
+      try { const body = await req.json(); await saveConfig(env, body); return json({ ok: true }); }
+      catch (e) { return json({ ok: false, error: String(e) }, 400); }
     }
 
-    // GET /api/generate — 生成一键命令
+    // GET /api/generate — 生成一键命令（含独立密码）
     if (req.method === "GET" && url.pathname === "/api/generate") {
       const mid = url.searchParams.get("mid") || "";
       const result = await generateCommand(env, req, mid);
@@ -716,7 +835,14 @@ export default {
       return json(result);
     }
 
-    // GET / — 看板页面
+    // POST /api/tg-summary — 发送 TG 汇总
+    if (req.method === "POST" && url.pathname === "/api/tg-summary") {
+      const result = await tgSummary(env);
+      if (!result.ok) return json(result, 400);
+      return json(result);
+    }
+
+    // GET / — 看板
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       return html(dashboardPage());
     }

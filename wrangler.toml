@@ -2,10 +2,8 @@ name = "cf-tg-web"
 main = "cf-worker-example.js"
 compatibility_date = "2024-11-01"
 
-# D1：CF Builds / wrangler 部署以本文件为准。
-# 只在 Dashboard 绑定、这里不写的话，每次 git 部署可能冲掉 DB，运行时报「D1 未绑定」。
-# 把 database_id 换成你 D1「tg-cf-web」页面上的 UUID（不是库名）。
+# D1 绑定（CF Builds / wrangler 部署以本文件为准）
 [[d1_databases]]
 binding = "DB"
 database_name = "tg-cf-web"
-database_id = "PASTE_YOUR_D1_UUID_HERE"
+database_id = "34bc88ea-5115-4251-b036-a9ebb9e64000"

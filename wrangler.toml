@@ -2,7 +2,12 @@ name = "cf-tg-web"
 main = "cf-worker-example.js"
 compatibility_date = "2024-11-01"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "traffic-db"
-database_id = "{CLOUDFLARE_D1_ID}"
+# ─── D1 绑定 ───
+# 首次部署：先注释保持关闭，代码能部署成功。
+# 创建 D1（traffic-db）后，取消下面注释，填入真实 database_id，再部署一次。
+# 也可在 Dashboard → Worker → 设置 → 绑定 里添加 D1（变量名必须是 DB）。
+#
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "traffic-db"
+# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

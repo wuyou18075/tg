@@ -12,12 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Replace D1 database_id
-        run: |
-          sed -i "s/{CLOUDFLARE_D1_ID}/${CLOUDFLARE_D1_ID}/g" wrangler.toml
-        env:
-          CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}
-
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4.0.0
         with:

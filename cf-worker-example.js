@@ -6,12 +6,14 @@
  * - TG 汇总：看板「发送 TG 汇总」→ 聚合所有机器 → 发 Telegram
  * - D1 历史曲线 + Chart.js
  *
- * 部署：Cloudflare Dashboard 网页操作
+ * 部署：
  *   1. 创建 D1 数据库 traffic-db
- *   2. 创建 Worker，粘贴此代码
- *   3. Worker 设置 → 绑定 D1（变量名 DB）
- *   4. Worker 设置 → 加密变量 TG_TOKEN（上报密码）/ PASSWORD（看板密码）/ TG_ID（TG 汇总 Chat ID）
- *   5. 部署
+ *   2. 部署本 Worker（wrangler / 一键部署 / 粘贴代码）
+ *   3. 绑定 D1：变量名必须是 DB
+ *   4. 加密变量：PASSWORD（看板密码，必填）
+ *                 TG_ID（TG 汇总 Chat ID，可选）
+ *                 TG_TOKEN（旧版全局上报密码，可选；新版用 VPS 独立 token）
+ *   5. 再部署一次使绑定生效
  */
 
 const SESSION_TTL = 60 * 60 * 24 * 7;
@@ -266,7 +268,7 @@ async function tgSummary(env) {
   // TG_ID 环境变量优先，其次看板设置页的 t_id
   const t_id = env.TG_ID || cfg.t_id || "";
   if (!t_token || !t_id) {
-    return { ok: false, error: "请设置 TG_TOKEN(环境变量) 和 TG_ID(环境变量/看板设置)" };
+    return { ok: false, error: "请在看板设置 Telegram Bot Token，并配置 TG_ID（环境变量或看板 t_id）" };
   }
 
   const machines = await listMachines(env);

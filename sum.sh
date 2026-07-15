@@ -11,6 +11,7 @@ readonly CF_TIMER_FILE="/etc/systemd/system/${APP_NAME}-cf.timer"
 
 VNSTAT_WAS_INSTALLED=false
 TG_ENABLED=false
+CF_ENABLED=false
 
 log()  { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 die()  { printf '错误: %s\n' "$*" >&2; exit 1; }
@@ -64,33 +65,57 @@ resolve_t_time() {
   printf '%s' "${val}"
 }
 
-# CF 必选
+# CF 可选：cf_url + cf_token + m_id 都提供才启用 CF 上报
 resolve_m_id() {
   local val="${m_id:-}"
   if [[ -z "${val}" ]]; then
-    read -r -p '请输入机器 ID（如 hk-1）: ' val
+    # 仅 CF 模式需要交互输入；纯 TG 模式可无
+    if [[ -n "${cf_url:-}" || -n "${cf_token:-}" ]]; then
+      read -r -p '请输入机器 ID（如 hk-1）: ' val
+    else
+      printf ''
+      return 0
+    fi
   fi
+  [[ -z "${val}" ]] && printf '' && return 0
   validate_m_id "${val}" || die "机器 ID 应为 1-64 位字母数字及 ._-: 组合。"
   printf '%s' "${val}"
 }
 resolve_cf_token() {
   local val="${cf_token:-}"
   if [[ -z "${val}" ]]; then
-    read -r -s -p '请输入 CF 上报 Token: ' val; printf '\n'
+    if [[ -n "${cf_url:-}" || -n "${m_id:-}" ]]; then
+      read -r -s -p '请输入 CF 上报 Token: ' val; printf '\n'
+    else
+      printf ''
+      return 0
+    fi
   fi
+  [[ -z "${val}" ]] && printf '' && return 0
   validate_cf_token "${val}" || die 'cf_token 格式无效。'
   printf '%s' "${val}"
 }
 resolve_cf_url() {
   local val="${cf_url:-}"
   if [[ -z "${val}" ]]; then
-    read -r -p '请输入 CF Worker 上报地址（https://...）: ' val
+    if [[ -n "${cf_token:-}" || -n "${m_id:-}" ]]; then
+      read -r -p '请输入 CF Worker 上报地址（https://...）: ' val
+    else
+      printf ''
+      return 0
+    fi
   fi
+  [[ -z "${val}" ]] && printf '' && return 0
   validate_url "${val}" || die 'cf_url 须为 https:// 开头的有效 URL。'
   printf '%s' "${val}"
 }
 resolve_cf_time() {
   local val="${cf_time:-0 * * * *}"
+  # 未启用 CF 时允许空/默认，不强制校验失败路径
+  if [[ -z "${cf_url:-}" && -z "${cf_token:-}" && -z "${m_id:-}" ]]; then
+    printf '%s' "${val}"
+    return 0
+  fi
   validate_cron "${val}" || die "cf_time 格式无效，应为 5 段 cron，例如：0 * * * *"
   printf '%s' "${val}"
 }
@@ -162,9 +187,13 @@ write_config() {
   local tmp; tmp="$(mktemp)"; chmod 600 "${tmp}"
   {
     printf 'INTERFACE=%s\n' "${ifname}"
-    printf 'MACHINE_ID=%s\n' "${m_id}"
-    printf 'CF_TOKEN=%s\n' "${cf_token}"
-    printf 'CF_URL=%s\n' "${cf_url}"
+    if [[ -n "${m_id}" ]]; then
+      printf 'MACHINE_ID=%s\n' "${m_id}"
+    fi
+    if [[ -n "${cf_token}" && -n "${cf_url}" ]]; then
+      printf 'CF_TOKEN=%s\n' "${cf_token}"
+      printf 'CF_URL=%s\n' "${cf_url}"
+    fi
     if [[ -n "${tg_token}" && -n "${tg_cid}" ]]; then
       printf 'TG_BOT_TOKEN=%s\n' "${tg_token}"
       printf 'TG_CHAT_ID=%s\n' "${tg_cid}"
@@ -202,9 +231,6 @@ load_config() {
     esac
   done <"${CONFIG}"
   [[ "${INTERFACE}" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || { log_error "INTERFACE 格式无效。"; return 1; }
-  [[ "${MACHINE_ID}" =~ ^[A-Za-z0-9._:-]{1,64}$ ]] || { log_error "MACHINE_ID 格式无效。"; return 1; }
-  [[ "${CF_TOKEN}" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]] || { log_error "CF_TOKEN 格式无效。"; return 1; }
-  [[ -n "${CF_URL}" ]] || { log_error "CF_URL 为空。"; return 1; }
 }
 
 require_cmds() {
@@ -294,8 +320,12 @@ ${title}
 ━━━━━━━━━━━━━━━━━━━━━━"
 }
 
-# ─── CF 上报（必选） ───
+# ─── CF 上报（可选） ───
 send_cf() {
+  [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]] || {
+    log_error "CF 未配置（需要 CF_URL / CF_TOKEN / MACHINE_ID）。"; return 1; }
+  [[ "${MACHINE_ID}" =~ ^[A-Za-z0-9._:-]{1,64}$ ]] || { log_error "MACHINE_ID 格式无效。"; return 1; }
+  [[ "${CF_TOKEN}" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]] || { log_error "CF_TOKEN 格式无效。"; return 1; }
   local payload="$(jq -nc \
     --arg m_id "${MACHINE_ID}" \
     --arg host "$(hostname)" \
@@ -346,7 +376,10 @@ main() {
   case "${1:-}" in
     --tg|--test) run_tg "${1}" ;;
     --cf)        run_cf ;;
-    "")          run_tg; run_cf ;;
+    "")
+      if [[ -n "${TG_BOT_TOKEN}" && -n "${TG_CHAT_ID}" ]]; then run_tg; fi
+      if [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]]; then run_cf; fi
+      ;;
     *)           log_error "未知参数：${1}"; return 1 ;;
   esac
 }
@@ -429,21 +462,28 @@ TIMER_EOF
 }
 
 enable_timers() {
-  local tg_enabled="$1"
+  local tg_enabled="$1" cf_enabled="$2"
   systemctl daemon-reload
-  systemctl enable --now "${APP_NAME}-cf.timer"
+  if [[ "${cf_enabled}" == "1" ]]; then
+    systemctl enable --now "${APP_NAME}-cf.timer"
+  else
+    systemctl disable --now "${APP_NAME}-cf.timer" >/dev/null 2>&1 || true
+    rm -f "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}"
+  fi
   if [[ "${tg_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}.timer"
   else
     systemctl disable --now "${APP_NAME}.timer" >/dev/null 2>&1 || true
     rm -f "${SERVICE_FILE}" "${TIMER_FILE}"
-    systemctl daemon-reload
   fi
+  systemctl daemon-reload
 }
 
 send_test() {
-  log '发送 CF 测试上报...'
-  "${REPORT_SCRIPT}" --cf || die 'CF 测试上报失败。请检查 cf_url / cf_token / m_id。'
+  if [[ "${CF_ENABLED}" == "true" ]]; then
+    log '发送 CF 测试上报...'
+    "${REPORT_SCRIPT}" --cf || die 'CF 测试上报失败。请检查 cf_url / cf_token / m_id。'
+  fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
     log '发送 Telegram 测试消息...'
     "${REPORT_SCRIPT}" --test || die 'Telegram 测试发送失败。'
@@ -453,20 +493,27 @@ send_test() {
 print_summary() {
   local ifname="$1" tg_time="$2" cf_cron="$3" m_id="$4"
   printf '\n安装完成。\n'
-  printf '  机器 ID：    %s\n'   "${m_id}"
   printf '  监控网卡：  %s\n'   "${ifname}"
-  printf '  CF 上报：    cron %s\n' "${cf_cron}"
+  if [[ "${CF_ENABLED}" == "true" ]]; then
+    printf '  机器 ID：    %s\n'   "${m_id}"
+    printf '  CF 上报：    cron %s\n' "${cf_cron}"
+  else
+    printf '  CF 上报：    未启用（设置 cf_url+cf_token+m_id 可开启）\n'
+  fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
     printf '  TG 汇报：    每天 %s\n' "${tg_time}"
   else
     printf '  TG 汇报：    未启用（设置 t_token+t_id 可开启）\n'
   fi
   printf '  配置文件：   %s（仅 root 可读）\n' "${CONFIG_FILE}"
-  printf '  立即 CF 上报：systemctl start %s-cf.service\n' "${APP_NAME}"
+  if [[ "${CF_ENABLED}" == "true" ]]; then
+    printf '  立即 CF 上报：systemctl start %s-cf.service\n' "${APP_NAME}"
+    printf '  查看日志：   journalctl -u %s-cf.service\n' "${APP_NAME}"
+  fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
     printf '  立即 TG 发送：systemctl start %s.service\n' "${APP_NAME}"
+    printf '  查看日志：   journalctl -u %s.service\n' "${APP_NAME}"
   fi
-  printf '  查看日志：   journalctl -u %s-cf.service\n' "${APP_NAME}"
   printf '  卸载：       bash $0 --uninstall\n'
   if ${VNSTAT_WAS_INSTALLED}; then
     printf '\n注意：vnStat 是本次新安装，只能统计安装后的流量。\n'
@@ -502,6 +549,14 @@ main() {
   cf_token="$(resolve_cf_token)"
   cf_url="$(resolve_cf_url)"
   cf_cron="$(resolve_cf_time)"
+  if [[ -n "${cf_url}" && -n "${cf_token}" && -n "${m_id}" ]]; then
+    CF_ENABLED=true
+  fi
+
+  # 至少启用一条通道
+  if [[ "${TG_ENABLED}" != "true" && "${CF_ENABLED}" != "true" ]]; then
+    die '请至少配置 TG（t_token+t_id）或 CF（cf_url+cf_token+m_id）其中一组。'
+  fi
 
   install_deps
   ifname="$(detect_interface)"
@@ -509,9 +564,11 @@ main() {
   write_config "${ifname}" "${m_id}" "${cf_token}" "${cf_url}" "${tg_token}" "${tg_cid}"
   write_reporter
 
-  # CF 服务/定时（始终安装）
-  write_cf_service_unit
-  write_cf_timer "${cf_cron}"
+  # CF 服务/定时（可选）
+  if [[ "${CF_ENABLED}" == "true" ]]; then
+    write_cf_service_unit
+    write_cf_timer "${cf_cron}"
+  fi
 
   # TG 服务/定时（可选）
   if [[ "${TG_ENABLED}" == "true" ]]; then
@@ -519,7 +576,9 @@ main() {
     write_tg_timer "${tg_time}"
   fi
 
-  enable_timers "$( [[ "${TG_ENABLED}" == "true" ]] && printf 1 || printf 0 )"
+  enable_timers \
+    "$( [[ "${TG_ENABLED}" == "true" ]] && printf 1 || printf 0 )" \
+    "$( [[ "${CF_ENABLED}" == "true" ]] && printf 1 || printf 0 )"
   send_test
   print_summary "${ifname}" "${tg_time}" "${cf_cron}" "${m_id}"
 }

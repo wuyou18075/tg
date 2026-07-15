@@ -1,7 +1,7 @@
 /**
  * Cloudflare Worker：多机流量中心
  * - D1 自动初始化（无需手动 schema.sql）
- * - 密码登录看板 + 配置面板（ttoken/tid/ttime/cftime）
+ * - 密码登录看板 + 配置面板（t_token/t_id/t_time/cf_time）
  * - 添加 VPS：生成唯一独立密码，VPS 用此密码上报（不暴露全局 TG 密钥）
  * - TG 汇总：看板「发送 TG 汇总」→ 聚合所有机器 → 发 Telegram
  * - D1 历史曲线 + Chart.js
@@ -10,7 +10,7 @@
  *   1. 创建 D1 数据库 traffic-db
  *   2. 创建 Worker，粘贴此代码
  *   3. Worker 设置 → 绑定 D1（变量名 DB）
- *   4. Worker 设置 → 加密变量 REPORT_TOKEN（备选）/ DASH_PASSWORD
+ *   4. Worker 设置 → 加密变量 TG_TOKEN（上报密码）/ PASSWORD（看板密码）/ TG_ID（TG 汇总 Chat ID）
  *   5. 部署
  */
 
@@ -42,7 +42,7 @@ function esc(s) {
 function reportAuth(req, env) {
   const h = req.headers.get("authorization") || "";
   const m = /^Bearer\s+(.+)$/i.exec(h);
-  return !!(env.REPORT_TOKEN && m && m[1] === env.REPORT_TOKEN);
+  return !!(env.TG_TOKEN && m && m[1] === env.TG_TOKEN);
 }
 
 // ─── 会话 ───
@@ -65,17 +65,17 @@ async function sha256Hex(text) {
 
 async function makeSessionToken(env) {
   const rnd = crypto.randomUUID() + crypto.randomUUID();
-  const sig = await sha256Hex(`${rnd}:${env.DASH_PASSWORD || ""}:dash`);
+  const sig = await sha256Hex(`${rnd}:${env.PASSWORD || ""}:dash`);
   return `${rnd}.${sig}`;
 }
 
 async function verifySessionToken(token, env) {
-  if (!token || !env.DASH_PASSWORD) return false;
+  if (!token || !env.PASSWORD) return false;
   const i = token.lastIndexOf(".");
   if (i < 0) return false;
   const rnd = token.slice(0, i);
   const sig = token.slice(i + 1);
-  return sig === (await sha256Hex(`${rnd}:${env.DASH_PASSWORD}:dash`)) && rnd.length >= 32;
+  return sig === (await sha256Hex(`${rnd}:${env.PASSWORD}:dash`)) && rnd.length >= 32;
 }
 
 function sessionCookie(token, maxAge = SESSION_TTL) {
@@ -83,7 +83,7 @@ function sessionCookie(token, maxAge = SESSION_TTL) {
 }
 
 async function requireDash(req, env) {
-  if (!env.DASH_PASSWORD) return true;
+  if (!env.PASSWORD) return true;
   return verifySessionToken(parseCookies(req)[COOKIE_NAME], env);
 }
 
@@ -184,7 +184,7 @@ async function getConfig(env) {
 async function saveConfig(env, data) {
   if (!env.DB) return;
   const now = Math.floor(Date.now() / 1000);
-  const keys = ["ttoken", "tid", "ttime", "cftime"];
+  const keys = ["t_token", "t_id", "t_time", "cf_time"];
   const stmts = keys.filter(k => data[k] !== undefined).map(k =>
     env.DB.prepare(
       `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
@@ -231,23 +231,23 @@ async function deleteVpsToken(env, mid) {
 async function generateCommand(env, request, mid) {
   const cfg = await getConfig(env);
   const url = new URL(request.url);
-  const cfurl = url.origin + "/api/report";
+  const cf_url = url.origin + "/api/report";
 
   // 生成/获取独立 token
   const vpsToken = await getOrCreateVpsToken(env, mid);
 
-  // cftime 默认每小时
-  const cftime = cfg.cftime || "0 * * * *";
+  // cf_time 默认每小时
+  const cf_time = cfg.cf_time || "0 * * * *";
 
   if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
     return { ok: false, error: "机器 ID 应为 1-64 位字母数字及 ._-: 组合" };
   }
 
-  // 命令不含 ttoken/tid — VPS 只上报 CF，TG 从看板汇总
-  const cmd = `mid='${mid}' \\
-cftoken='${vpsToken}' \\
-cfurl='${cfurl}' \\
-cftime='${cftime}' \\
+  // 命令不含 t_token/t_id — VPS 只上报 CF，TG 从看板汇总
+  const cmd = `m_id='${mid}' \\
+cf_token='${vpsToken}' \\
+cf_url='${cf_url}' \\
+cf_time='${cf_time}' \\
   bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')`;
 
   return {
@@ -262,10 +262,11 @@ cftime='${cftime}' \\
 
 async function tgSummary(env) {
   const cfg = await getConfig(env);
-  const ttoken = cfg.ttoken || "";
-  const tid = cfg.tid || "";
-  if (!ttoken || !tid) {
-    return { ok: false, error: "请在设置页配置 ttoken 和 tid" };
+  const t_token = cfg.t_token || "";
+  // TG_ID 环境变量优先，其次看板设置页的 t_id
+  const t_id = env.TG_ID || cfg.t_id || "";
+  if (!t_token || !t_id) {
+    return { ok: false, error: "请设置 TG_TOKEN(环境变量) 和 TG_ID(环境变量/看板设置)" };
   }
 
   const machines = await listMachines(env);
@@ -306,12 +307,12 @@ async function tgSummary(env) {
 ${lines}${more}`;
 
   // 发送到 Telegram
-  const apiUrl = `https://api.telegram.org/bot${ttoken}/sendMessage`;
+  const apiUrl = `https://api.telegram.org/bot${t_token}/sendMessage`;
   const resp = await fetch(apiUrl, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      chat_id: tid,
+      chat_id: t_id,
       text: msg,
       disable_web_page_preview: "true",
     }),
@@ -475,21 +476,21 @@ tr.active{background:#1a2740}
   <div id="pageSettings" class="page">
     <div class="panel settings-form">
       <h2>全局配置</h2>
-      <p class="muted" style="font-size:12px">保存后可在看板页「添加 VPS」一键生成安装命令。<br>TG 配置用于看板顶部的「📊 TG 汇总」按钮发送聚合日报。</p>
-      <label for="s_ttoken">Telegram Bot Token（汇总用）</label>
-      <input id="s_ttoken" type="password" placeholder="123456:ABCdef...">
+      <p class="muted" style="font-size:12px">保存后可在看板页「添加 VPS」一键生成安装命令。<br>TG 配置用于看板顶部的「📊 TG 汇总」按钮发送聚合日报。TG_ID 环境变量优先。</p>
+      <label for="s_t_token">Telegram Bot Token（汇总用）</label>
+      <input id="s_t_token" type="password" placeholder="123456:ABCdef...">
       <div class="hint">Worker 汇总 TG 消息所需的 Bot Token</div>
 
-      <label for="s_tid">Telegram Chat ID</label>
-      <input id="s_tid" type="text" placeholder="-1001234567890">
+      <label for="s_t_id">Telegram Chat ID</label>
+      <input id="s_t_id" type="text" placeholder="-1001234567890">
       <div class="hint">接收汇总日报的 TG 会话 ID</div>
 
-      <label for="s_ttime">TG 汇报时间</label>
-      <input id="s_ttime" type="text" placeholder="20:00:00">
+      <label for="s_t_time">TG 汇报时间</label>
+      <input id="s_t_time" type="text" placeholder="20:00:00">
       <div class="hint">HH:MM:SS 格式，默认 20:00:00（暂未定时，需手动点 TG 汇总）</div>
 
-      <label for="s_cftime">CF 上报 cron（VPS 端默认）</label>
-      <input id="s_cftime" type="text" placeholder="0 * * * *">
+      <label for="s_cf_time">CF 上报 cron（VPS 端默认）</label>
+      <input id="s_cf_time" type="text" placeholder="0 * * * *">
       <div class="hint">5 段 cron，默认 0 * * * *（每小时），新 VPS 命令会使用此值</div>
 
       <div class="save-row">
@@ -656,10 +657,10 @@ async function sendTgSummary() {
 async function loadConfig() {
   const data = await api("/api/config");
   if (!data) return;
-  document.getElementById("s_ttoken").value = data.ttoken || "";
-  document.getElementById("s_tid").value = data.tid || "";
-  document.getElementById("s_ttime").value = data.ttime || "20:00:00";
-  document.getElementById("s_cftime").value = data.cftime || "0 * * * *";
+  document.getElementById("s_t_token").value = data.t_token || "";
+  document.getElementById("s_t_id").value = data.t_id || "";
+  document.getElementById("s_t_time").value = data.t_time || "20:00:00";
+  document.getElementById("s_cf_time").value = data.cf_time || "0 * * * *";
 }
 
 async function saveConfig() {
@@ -672,10 +673,10 @@ async function saveConfig() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ttoken: document.getElementById("s_ttoken").value.trim(),
-        tid: document.getElementById("s_tid").value.trim(),
-        ttime: document.getElementById("s_ttime").value.trim() || "20:00:00",
-        cftime: document.getElementById("s_cftime").value.trim() || "0 * * * *",
+        t_token: document.getElementById("s_t_token").value.trim(),
+        t_id: document.getElementById("s_t_id").value.trim(),
+        t_time: document.getElementById("s_t_time").value.trim() || "20:00:00",
+        cf_time: document.getElementById("s_cf_time").value.trim() || "0 * * * *",
       }),
     });
     document.getElementById("saveStatus").textContent = "✓ 已保存";
@@ -765,7 +766,7 @@ export default {
         return json({ ok: false, error: "machine_id invalid" }, 400);
       }
 
-      // 优先用 REPORT_TOKEN（全局，向后兼容），其次校验每台 VPS 独立密码
+      // 优先用 TG_TOKEN（全局密码），其次校验每台 VPS 独立密码
       if (!reportAuth(req, env)) {
         const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
         if (!token || !(await verifyVpsToken(env, mid, token))) {
@@ -786,8 +787,8 @@ export default {
       if (req.method === "POST") {
         const form = await req.formData();
         const pw = String(form.get("password") || "");
-        if (!env.DASH_PASSWORD) return Response.redirect(new URL("/", url).toString(), 302);
-        if (pw !== env.DASH_PASSWORD) return html(loginPage("密码错误"), 401);
+        if (!env.PASSWORD) return Response.redirect(new URL("/", url).toString(), 302);
+        if (pw !== env.PASSWORD) return html(loginPage("密码错误"), 401);
         const token = await makeSessionToken(env);
         return new Response(null, { status: 302, headers: { Location: "/", "Set-Cookie": sessionCookie(token) } });
       }

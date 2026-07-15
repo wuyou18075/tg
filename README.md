@@ -1,6 +1,56 @@
 # 流量汇报（Telegram + Cloudflare）
 
-一键部署（纯网页操作，无需本地安装任何工具）。
+---
+
+## 快速入门：仅 Telegram 日报（无需 Cloudflare）
+
+如果你的需求只是每天在 Telegram 收到 VPS 流量日报，**不需要看板/Web 页面**，可以跳过整个 Cloudflare 部署流程，只需在 VPS 上运行一条命令即可。
+
+### 适用环境
+
+- 系统：**Debian 13**
+- 架构：amd64 / arm64
+
+### 用法
+
+在 VPS 上直接粘贴执行以下命令（替换其中的 Token 和 Chat ID）：
+
+```bash
+t_token='123456:ABC...' t_id='-1001234567890' \
+  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
+```
+
+Agent 会自动：
+1. 安装 vnStat、jq 等依赖
+2. 配置当前默认网卡
+3. 设置 systemd 定时器（默认每天 **20:00** 发一次 TG 日报）
+4. 立即发送一条测试消息
+
+> 如果需要自定义发送时间，加 `t_time` 参数：
+> ```bash
+> t_token='...' t_id='...' t_time='09:30:00' \
+>   bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
+> ```
+
+完成后可随时查看状态：
+```bash
+systemctl status traffic-telegram-report.timer   # TG 定时器状态
+systemctl start traffic-telegram-report.service   # 立即手动发送
+journalctl -u traffic-telegram-report.service     # 最近一次发送日志
+```
+
+---
+
+## 完整方案：Telegram + Cloudflare 看板
+
+如需 Web 看板、多机集中管理、历史曲线图表，请按以下步骤部署 Cloudflare Worker。
+
+[![部署到 Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wuyou18075/tg)
+
+> 点击上方按钮，授权后自动拉取本仓库代码部署到 Cloudflare Workers。
+> **部署完成后**，还需手动绑定 D1 数据库和添加密钥（见下方步骤 1/4/5）。
+
+**☝️ 点击一键部署按钮后，继续看下方第 1、4、5 步配置 D1 和密钥。**
 
 ---
 
@@ -16,8 +66,14 @@
 
 创建后记下该数据库的 **ID**（一串 UUID），下一步要用。
 
-### 第 2 步：创建 Worker
+### 第 2 步：创建 Worker（二选一）
 
+**方式 A：一键部署按钮** ✅ 推荐
+1. 点击上方「部署到 Cloudflare Workers」按钮
+2. 授权 GitHub 和 Cloudflare
+3. 完成后自动生成 Worker，继续第 3 步绑定 D1
+
+**方式 B：手动创建**
 1. 左侧 **Workers & Pages** → **创建应用程序** → **Worker** → **部署**
 2. 点「编辑代码」，**全选删除**默认代码
 3. 打开本仓库的 [`cf-worker-example.js`](cf-worker-example.js)，全选复制，粘贴进去
@@ -38,8 +94,9 @@
 
 | 变量名 | 值 | 说明 |
 |--------|----|------|
-| `REPORT_TOKEN` | 任意字符串，如 `my-token-2024` | Agent 上报所用的 cftoken，生成 VPS 命令时会引用 |
-| `DASH_PASSWORD` | 你的看板登录密码 | 访问看板时需要输入 |
+| `TG_TOKEN` | 任意字符串，如 `my-token-2024` | VPS 上报密码（cf_token），生成命令时引用 |
+| `PASSWORD` | 你的看板登录密码 | 访问看板时需要输入 |
+| `TG_ID` | TG 汇总接收 Chat ID | TG 汇总的目标会话 ID，也可在设置页配置 |
 
 3. 勾选「加密」→ 点「保存」
 
@@ -51,7 +108,7 @@
 https://traffic-dashboard.你的子域.workers.dev/
 ```
 
-用刚才设置的 `DASH_PASSWORD` 登录。
+用刚才设置的 `PASSWORD` 登录。
 
 > D1 表结构会在首次请求时由 Worker 自动创建，无需额外操作。
 
@@ -61,7 +118,7 @@ https://traffic-dashboard.你的子域.workers.dev/
 
 ### 1. 打开看板
 
-访问你的 Worker 地址，用 `DASH_PASSWORD` 登录。
+访问你的 Worker 地址，用 `PASSWORD` 登录。
 
 ### 2. 设置 → 保存 TG 配置
 
@@ -85,11 +142,11 @@ https://traffic-dashboard.你的子域.workers.dev/
 复制出的命令类似：
 
 ```bash
-ttoken='123456:ABC...' tid='-1001234567890' ttime='20:00:00' \
-cftime='0 * * * *' \
-cfurl='https://traffic-dashboard.xxx.workers.dev/api/report' \
-cftoken='my-token-2024' \
-mid='hk-1' \
+t_token='123456:ABC...' t_id='-1001234567890' t_time='20:00:00' \
+cf_time='0 * * * *' \
+cf_url='https://traffic-dashboard.xxx.workers.dev/api/report' \
+cf_token='my-token-2024' \
+m_id='hk-1' \
   bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
 ```
 
@@ -126,15 +183,15 @@ mid='hk-1' \
 
 | 变量 | 含义 | 默认 |
 |------|------|------|
-| `ttoken` | Telegram Bot Token | 页面设置 |
-| `tid` | Telegram Chat ID | 页面设置 |
-| `ttime` | TG 汇报时间 `HH:MM:SS` | `20:00:00` |
-| `cftime` | CF 汇报 cron（5 段） | `0 * * * *` |
-| `cfurl` | Worker 上报地址 | 自动生成 |
-| `cftoken` | 上报 Bearer Token | `REPORT_TOKEN` secret |
-| `mid` | 机器 ID | 生成时输入 |
+| `t_token` | Telegram Bot Token | 页面设置 |
+| `t_id` | Telegram Chat ID | 页面设置 |
+| `t_time` | TG 汇报时间 `HH:MM:SS` | `20:00:00` |
+| `cf_time` | CF 汇报 cron（5 段） | `0 * * * *` |
+| `cf_url` | Worker 上报地址 | 自动生成 |
+| `cf_token` | 上报 Bearer Token | `TG_TOKEN` secret |
+| `m_id` | 机器 ID | 生成时输入 |
 
-### cftime 示例
+### cf_time 示例
 
 - `0 * * * *` — 每小时
 - `0 */6 * * *` — 每 6 小时
@@ -150,21 +207,4 @@ systemctl status traffic-telegram-report.timer         # TG 定时器
 systemctl status traffic-telegram-report-cf.timer      # CF 定时器
 
 systemctl start traffic-telegram-report.service        # 立即发 TG
-systemctl start traffic-telegram-report-cf.service     # 立即报 CF
-
-journalctl -u traffic-telegram-report.service -u traffic-telegram-report-cf.service
-
-bash sum.sh --uninstall                                # 卸载（保留 vnStat）
-```
-
----
-
-## 文件说明
-
-| 文件 | 作用 |
-|------|------|
-| `sum.sh` | VPS 侧一键安装脚本（含 Agent 报告程序） |
-| `cf-worker-example.js` | Cloudflare Worker 主程序（看板 + API + 自动建表） |
-| `schema.sql` | D1 表结构参考（Worker 自动执行，无需手动跑） |
-| `wrangler.toml` | wrangler 部署配置 |
-| `.github/workflows/deploy.yml` | GitHub Actions 自动部署配置 |
+systemctl start traffic-telegram-report-cf.s

@@ -41,57 +41,57 @@ validate_cron() {
   return 0
 }
 validate_url() { [[ "$1" == https://* ]] && [[ "$1" != *" "* ]] && [[ ${#1} -ge 12 ]]; }
-validate_mid() { [[ "$1" =~ ^[A-Za-z0-9._:-]{1,64}$ ]]; }
-validate_cftoken() { [[ "$1" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; }
+validate_m_id() { [[ "$1" =~ ^[A-Za-z0-9._:-]{1,64}$ ]]; }
+validate_cf_token() { [[ "$1" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; }
 
 # ─── 参数解析（环境变量优先） ───
-# TG 可选：ttoken + tid 都提供才启用 TG 日报
-resolve_ttoken() {
-  local val="${ttoken:-}"
+# TG 可选：t_token + t_id 都提供才启用 TG 日报
+resolve_t_token() {
+  local val="${t_token:-}"
   [[ -z "${val}" ]] && printf '' && return 0
   validate_token "${val}" || die 'Bot Token 格式无效。'
   printf '%s' "${val}"
 }
-resolve_tid() {
-  local val="${tid:-}"
+resolve_t_id() {
+  local val="${t_id:-}"
   [[ -z "${val}" ]] && printf '' && return 0
   validate_chat_id "${val}" || die 'Chat ID 应为纯数字，可带负号。'
   printf '%s' "${val}"
 }
-resolve_ttime() {
-  local val="${ttime:-20:00:00}"
-  validate_time "${val}" || die "ttime 格式无效，应为 HH:MM:SS，例如 20:00:00。"
+resolve_t_time() {
+  local val="${t_time:-20:00:00}"
+  validate_time "${val}" || die "t_time 格式无效，应为 HH:MM:SS，例如 20:00:00。"
   printf '%s' "${val}"
 }
 
 # CF 必选
-resolve_mid() {
-  local val="${mid:-}"
+resolve_m_id() {
+  local val="${m_id:-}"
   if [[ -z "${val}" ]]; then
     read -r -p '请输入机器 ID（如 hk-1）: ' val
   fi
-  validate_mid "${val}" || die "机器 ID 应为 1-64 位字母数字及 ._-: 组合。"
+  validate_m_id "${val}" || die "机器 ID 应为 1-64 位字母数字及 ._-: 组合。"
   printf '%s' "${val}"
 }
-resolve_cftoken() {
-  local val="${cftoken:-}"
+resolve_cf_token() {
+  local val="${cf_token:-}"
   if [[ -z "${val}" ]]; then
     read -r -s -p '请输入 CF 上报 Token: ' val; printf '\n'
   fi
-  validate_cftoken "${val}" || die 'cftoken 格式无效。'
+  validate_cf_token "${val}" || die 'cf_token 格式无效。'
   printf '%s' "${val}"
 }
-resolve_cfurl() {
-  local val="${cfurl:-}"
+resolve_cf_url() {
+  local val="${cf_url:-}"
   if [[ -z "${val}" ]]; then
     read -r -p '请输入 CF Worker 上报地址（https://...）: ' val
   fi
-  validate_url "${val}" || die 'cfurl 须为 https:// 开头的有效 URL。'
+  validate_url "${val}" || die 'cf_url 须为 https:// 开头的有效 URL。'
   printf '%s' "${val}"
 }
-resolve_cftime() {
-  local val="${cftime:-0 * * * *}"
-  validate_cron "${val}" || die "cftime 格式无效，应为 5 段 cron，例如：0 * * * *"
+resolve_cf_time() {
+  local val="${cf_time:-0 * * * *}"
+  validate_cron "${val}" || die "cf_time 格式无效，应为 5 段 cron，例如：0 * * * *"
   printf '%s' "${val}"
 }
 
@@ -158,13 +158,13 @@ configure_vnstat() {
 }
 
 write_config() {
-  local ifname="$1" mid="$2" cftoken="$3" cfurl="$4" tg_token="$5" tg_cid="$6"
+  local ifname="$1" m_id="$2" cf_token="$3" cf_url="$4" tg_token="$5" tg_cid="$6"
   local tmp; tmp="$(mktemp)"; chmod 600 "${tmp}"
   {
     printf 'INTERFACE=%s\n' "${ifname}"
-    printf 'MACHINE_ID=%s\n' "${mid}"
-    printf 'CF_TOKEN=%s\n' "${cftoken}"
-    printf 'CF_URL=%s\n' "${cfurl}"
+    printf 'MACHINE_ID=%s\n' "${m_id}"
+    printf 'CF_TOKEN=%s\n' "${cf_token}"
+    printf 'CF_URL=%s\n' "${cf_url}"
     if [[ -n "${tg_token}" && -n "${tg_cid}" ]]; then
       printf 'TG_BOT_TOKEN=%s\n' "${tg_token}"
       printf 'TG_CHAT_ID=%s\n' "${tg_cid}"
@@ -297,7 +297,7 @@ ${title}
 # ─── CF 上报（必选） ───
 send_cf() {
   local payload="$(jq -nc \
-    --arg mid "${MACHINE_ID}" \
+    --arg m_id "${MACHINE_ID}" \
     --arg host "$(hostname)" \
     --arg iface "${INTERFACE}" \
     --argjson ts "$(date +%s)" \
@@ -309,7 +309,7 @@ send_cf() {
     --argjson m "${STAT_MONTH}" \
     --argjson d "${STAT_DAY}" \
     '{
-      machine_id: $mid, hostname: $host, interface: $iface, ts: $ts,
+      machine_id: $m_id, hostname: $host, interface: $iface, ts: $ts,
       date: { year: ($y|tonumber), month: $m, day: $d },
       today: { rx: $tr_rx, tx: $tr_tx, total: ($tr_rx + $tr_tx) },
       month: { rx: $mr_rx, tx: $mr_tx, total: ($mr_rx + $mr_tx) }
@@ -443,7 +443,7 @@ enable_timers() {
 
 send_test() {
   log '发送 CF 测试上报...'
-  "${REPORT_SCRIPT}" --cf || die 'CF 测试上报失败。请检查 cfurl / cftoken / mid。'
+  "${REPORT_SCRIPT}" --cf || die 'CF 测试上报失败。请检查 cf_url / cf_token / m_id。'
   if [[ "${TG_ENABLED}" == "true" ]]; then
     log '发送 Telegram 测试消息...'
     "${REPORT_SCRIPT}" --test || die 'Telegram 测试发送失败。'
@@ -451,15 +451,15 @@ send_test() {
 }
 
 print_summary() {
-  local ifname="$1" tg_time="$2" cf_cron="$3" mid="$4"
+  local ifname="$1" tg_time="$2" cf_cron="$3" m_id="$4"
   printf '\n安装完成。\n'
-  printf '  机器 ID：    %s\n'   "${mid}"
+  printf '  机器 ID：    %s\n'   "${m_id}"
   printf '  监控网卡：  %s\n'   "${ifname}"
   printf '  CF 上报：    cron %s\n' "${cf_cron}"
   if [[ "${TG_ENABLED}" == "true" ]]; then
     printf '  TG 汇报：    每天 %s\n' "${tg_time}"
   else
-    printf '  TG 汇报：    未启用（设置 ttoken+tid 可开启）\n'
+    printf '  TG 汇报：    未启用（设置 t_token+t_id 可开启）\n'
   fi
   printf '  配置文件：   %s（仅 root 可读）\n' "${CONFIG_FILE}"
   printf '  立即 CF 上报：systemctl start %s-cf.service\n' "${APP_NAME}"
@@ -486,27 +486,27 @@ uninstall_app() {
 }
 
 main() {
-  local ifname mid cftoken cfurl tg_token tg_cid tg_time cf_cron
+  local ifname m_id cf_token cf_url tg_token tg_cid tg_time cf_cron
   require_root
   if [[ "${1:-}" == '--uninstall' ]]; then uninstall_app; return; fi
   check_debian13
 
   # 解析参数
-  tg_token="$(resolve_ttoken)"
-  tg_cid="$(resolve_tid)"
-  tg_time="$(resolve_ttime)"
+  tg_token="$(resolve_t_token)"
+  tg_cid="$(resolve_t_id)"
+  tg_time="$(resolve_t_time)"
   if [[ -n "${tg_token}" && -n "${tg_cid}" ]]; then
     TG_ENABLED=true
   fi
-  mid="$(resolve_mid)"
-  cftoken="$(resolve_cftoken)"
-  cfurl="$(resolve_cfurl)"
-  cf_cron="$(resolve_cftime)"
+  m_id="$(resolve_m_id)"
+  cf_token="$(resolve_cf_token)"
+  cf_url="$(resolve_cf_url)"
+  cf_cron="$(resolve_cf_time)"
 
   install_deps
   ifname="$(detect_interface)"
   configure_vnstat "${ifname}"
-  write_config "${ifname}" "${mid}" "${cftoken}" "${cfurl}" "${tg_token}" "${tg_cid}"
+  write_config "${ifname}" "${m_id}" "${cf_token}" "${cf_url}" "${tg_token}" "${tg_cid}"
   write_reporter
 
   # CF 服务/定时（始终安装）
@@ -521,7 +521,7 @@ main() {
 
   enable_timers "$( [[ "${TG_ENABLED}" == "true" ]] && printf 1 || printf 0 )"
   send_test
-  print_summary "${ifname}" "${tg_time}" "${cf_cron}" "${mid}"
+  print_summary "${ifname}" "${tg_time}" "${cf_cron}" "${m_id}"
 }
 
 main "$@"

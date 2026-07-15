@@ -1,15 +1,11 @@
-# 流量汇报（Telegram + Cloudflare）
-
----
-
-## 快速入门：仅 Telegram 日报（无需 Cloudflare）
-
-如果你的需求只是每天在 Telegram 收到 VPS 流量日报，**不需要看板/Web 页面**，可以跳过整个 Cloudflare 部署流程，只需在 VPS 上运行一条命令即可。
-
 ### 适用环境
 
 - 系统：**Debian 13**
 - 架构：amd64 / arm64
+
+## 快速入门：仅 Telegram 日报（无需 Cloudflare）
+
+如果你的需求只是每天在 Telegram 收到 VPS 流量日报，**不需要看板/Web 页面**，可以跳过整个 Cloudflare 部署流程，只需在 VPS 上运行一条命令即可。
 
 ### 用法
 

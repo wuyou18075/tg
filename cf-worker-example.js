@@ -602,6 +602,9 @@ tr.active{background:#1a2740}
 <script>
 const gb = (n) => ((Number(n)||0)/1e9).toFixed(3) + "GB";
 const fmtTime = (ts) => ts ? new Date(ts*1000).toLocaleString() : "-";
+const esc = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 let machines = [];
 let selected = null;
 let chart;
@@ -694,13 +697,17 @@ async function loadHistory() {
 }
 
 async function refresh() {
-  const data = await api("/api/machines");
-  machines = (data && data.machines) || [];
-  if (!selected && machines[0]) selected = machines[0].machine_id;
-  if (selected && !machines.find(m => m.machine_id === selected)) selected = machines[0]?.machine_id || null;
-  renderSummary();
-  renderTable();
-  await loadHistory();
+  try {
+    const data = await api("/api/machines");
+    machines = (data && data.machines) || [];
+    if (!selected && machines[0]) selected = machines[0].machine_id;
+    if (selected && !machines.find(m => m.machine_id === selected)) selected = machines[0]?.machine_id || null;
+    renderSummary();
+    renderTable();
+    await loadHistory();
+  } catch (e) {
+    toast("刷新失败：" + (e && e.message ? e.message : String(e)));
+  }
 }
 
 // ─── TG 汇总 ───

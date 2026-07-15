@@ -20,4 +20,6 @@ jobs:
           command: deploy
           wranglerVersion: "3.90.0"
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_D1_ID: ${{ secrets.CLOUDFLARE_D1_ID }}

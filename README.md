@@ -116,12 +116,12 @@ https://cf-tg-web.你的子域.workers.dev/
 
 ### 2. 添加 VPS
 
-**看板** → **＋ 添加 VPS** → 输入机器 ID（如 `hk-1`）→ 生成并复制命令。
+**看板** → **＋ 添加 VPS** → 输入机器 ID（如 `香港-1` / `hk-1`，支持中文）→ 生成并复制命令。
 
 生成的命令类似：
 
 ```bash
-m_id='hk-1' \
+m_id='香港-1' \
 cf_token='vps-独立token' \
 cf_url='https://cf-tg-web.xxx.workers.dev/api/report' \
 cf_time='0 * * * *' \
@@ -150,7 +150,7 @@ cf_time='0 * * * *' \
 | `cf_url` | Worker 上报地址 `https://.../api/report` | 看板生成 |
 | `cf_token` | 上报 Bearer Token | 看板为每台 VPS 生成独立 token |
 | `cf_time` | CF 上报 cron（5 段） | `0 * * * *` |
-| `m_id` | 机器 ID | 看板添加时输入 |
+| `m_id` | 机器 ID（支持中文，1-64 字） | 看板添加时输入 |
 
 规则：
 

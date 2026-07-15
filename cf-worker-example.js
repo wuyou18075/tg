@@ -41,6 +41,19 @@ function esc(s) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+
+/** 机器 ID：1-64 字符，允许中英文、数字、._-: ，禁止空白与引号 */
+function isValidMachineId(mid) {
+  const id = String(mid || "").trim();
+  if (!id || id.length > 64) return false;
+  // 字母/数字/CJK/常见符号，禁止空白、引号、斜杠等
+  return /^[\u4e00-\u9fffA-Za-z0-9._:-]{1,64}$/.test(id);
+}
+
+function bashSingleQuote(s) {
+  return String(s).replace(/'/g, `'\''`);
+}
+
 function reportAuth(req, env) {
   const h = req.headers.get("authorization") || "";
   const m = /^Bearer\s+(.+)$/i.exec(h);
@@ -233,10 +246,10 @@ async function deleteVpsToken(env, mid) {
 async function generateCommand(env, request, mid) {
   mid = String(mid || "").trim();
   // 先校验再写库，避免无效 ID 污染 vps_tokens
-  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+  if (!isValidMachineId(mid)) {
     return {
       ok: false,
-      error: "机器 ID 应为 1-64 位字母数字及 ._-: 组合（例如 hk-1 / jp-2 / us-west），不要空格或中文",
+      error: "机器 ID 应为 1-64 字，支持中英文、数字及 ._-:（如 香港-1 / hk-1），不要空格",
     };
   }
 
@@ -247,7 +260,8 @@ async function generateCommand(env, request, mid) {
   const cf_time = cfg.cf_time || "0 * * * *";
 
   // 命令不含 t_token/t_id — VPS 只上报 CF，TG 从看板汇总
-  const cmd = `m_id='${mid}' \\
+  const midQ = bashSingleQuote(mid);
+  const cmd = `m_id='${midQ}' \\
 cf_token='${vpsToken}' \\
 cf_url='${cf_url}' \\
 cf_time='${cf_time}' \\
@@ -510,7 +524,7 @@ tr.active{background:#1a2740}
     <h2>添加 VPS</h2>
     <p class="desc">输入机器 ID，生成独立密码和安装命令。复制到 VPS 执行即可。</p>
     <label for="vpsMid">机器 ID</label>
-    <input id="vpsMid" type="text" placeholder="hk-1 / jp-2 / us-west（仅英文数字 ._-:）" autocomplete="off">
+    <input id="vpsMid" type="text" placeholder="香港-1 / hk-1 / jp-2" autocomplete="off">
     <div id="vpsCmdRegion" style="display:none">
       <div class="cmd-ok" id="vpsOk"></div>
       <div class="cmd-box" id="vpsCmd"></div>
@@ -708,8 +722,8 @@ function closeAddVps() {
 async function genCmd() {
   const mid = document.getElementById("vpsMid").value.trim();
   if (!mid) { toast("请输入机器 ID"); return; }
-  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
-    toast("机器 ID 仅限字母数字及 ._-:（如 hk-1），不要空格/中文");
+  if (!/^[一-鿿A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+    toast("机器 ID 1-64 字，支持中英文/数字/._-:（如 香港-1）");
     return;
   }
   const btn = document.querySelector("#vpsBtnRegion .green");
@@ -769,7 +783,8 @@ export default {
       let body;
       try { body = await req.json(); } catch { return json({ ok: false, error: "invalid json" }, 400); }
       const mid = body.machine_id || req.headers.get("x-machine-id");
-      if (!mid || !/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+      mid = String(mid || "").trim();
+      if (!isValidMachineId(mid)) {
         return json({ ok: false, error: "machine_id invalid" }, 400);
       }
 
@@ -822,7 +837,8 @@ export default {
       if (!env.DB) return json({ ok: true, points: [] });
       const mid = url.searchParams.get("mid") || "";
       const hours = Math.min(24 * 90, Math.max(1, Number(url.searchParams.get("hours") || 168)));
-      if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) return json({ ok: false, error: "mid invalid" }, 400);
+      mid = String(mid || "").trim();
+      if (!isValidMachineId(mid)) return json({ ok: false, error: "mid invalid" }, 400);
       return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
     }
 

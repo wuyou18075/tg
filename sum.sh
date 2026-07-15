@@ -42,7 +42,15 @@ validate_cron() {
   return 0
 }
 validate_url() { [[ "$1" == https://* ]] && [[ "$1" != *" "* ]] && [[ ${#1} -ge 12 ]]; }
-validate_m_id() { [[ "$1" =~ ^[A-Za-z0-9._:-]{1,64}$ ]]; }
+# 机器 ID：1-64 字符，允许中英文/数字/._-:，禁止空白与特殊符号
+validate_m_id() {
+  local id="$1"
+  [[ -n "${id}" ]] || return 1
+  [[ ${#id} -le 64 ]] || return 1
+  [[ "${id}" != *[[:space:]]* ]] || return 1
+  [[ "${id}" != *"'"* && "${id}" != *'"'* && "${id}" != */* && "${id}" != *\\* ]] || return 1
+  return 0
+}
 validate_cf_token() { [[ "$1" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; }
 
 # ─── 参数解析（环境变量优先） ───
@@ -78,7 +86,7 @@ resolve_m_id() {
     fi
   fi
   [[ -z "${val}" ]] && printf '' && return 0
-  validate_m_id "${val}" || die "机器 ID 应为 1-64 位字母数字及 ._-: 组合。"
+  validate_m_id "${val}" || die "机器 ID 应为 1-64 字，支持中英文、数字及 ._-:（如 香港-1 / hk-1）。"
   printf '%s' "${val}"
 }
 resolve_cf_token() {
@@ -324,7 +332,12 @@ ${title}
 send_cf() {
   [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]] || {
     log_error "CF 未配置（需要 CF_URL / CF_TOKEN / MACHINE_ID）。"; return 1; }
-  [[ "${MACHINE_ID}" =~ ^[A-Za-z0-9._:-]{1,64}$ ]] || { log_error "MACHINE_ID 格式无效。"; return 1; }
+  if [[ -z "${MACHINE_ID}" || ${#MACHINE_ID} -gt 64 ]]; then
+    log_error "MACHINE_ID 格式无效。"; return 1
+  fi
+  if [[ "${MACHINE_ID}" == *[[:space:]]* || "${MACHINE_ID}" == *"'"* || "${MACHINE_ID}" == *'"'* || "${MACHINE_ID}" == */* || "${MACHINE_ID}" == *\\* ]]; then
+    log_error "MACHINE_ID 格式无效。"; return 1
+  fi
   [[ "${CF_TOKEN}" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]] || { log_error "CF_TOKEN 格式无效。"; return 1; }
   local payload="$(jq -nc \
     --arg m_id "${MACHINE_ID}" \

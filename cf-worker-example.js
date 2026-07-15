@@ -279,6 +279,45 @@ async function deleteVpsToken(env, mid) {
   await env.DB.prepare(`DELETE FROM vps_tokens WHERE machine_id = ?`).bind(mid).run();
 }
 
+/** 看板「获取流量」：写入全局强制上报时间戳（秒） */
+async function setForceReportAll(env) {
+  if (!env.DB) throw new Error(missingDbError(env));
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO config (key, value, updated_at) VALUES ('force_report_at', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
+  ).bind(String(now), now).run();
+  return now;
+}
+
+async function getForceReportAt(env) {
+  if (!env.DB) return 0;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT value FROM config WHERE key = 'force_report_at'`
+    ).first();
+    return row ? Number(row.value) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Agent 轮询：若全局强制时间晚于本机 last_ts，则要求立即上报。
+ * 强制指令 15 分钟后过期。
+ */
+async function agentShouldForceReport(env, mid) {
+  const forceAt = await getForceReportAt(env);
+  if (!forceAt) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (now - forceAt > 15 * 60) return false;
+  const row = await env.DB.prepare(
+    `SELECT last_ts FROM machines WHERE machine_id = ?`
+  ).bind(mid).first();
+  const lastTs = row ? Number(row.last_ts) || 0 : 0;
+  return lastTs < forceAt;
+}
+
 // ─── 生成一键命令 ───
 
 async function generateCommand(env, request, rawMid) {
@@ -519,6 +558,7 @@ tr.active{background:#1a2740}
         <option value="720">30 天</option>
       </select>
       <button onclick="refresh()">刷新</button>
+      <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="通知所有 VPS 立即上报（约 1 分钟内）">获取流量</button>
       <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>
@@ -737,6 +777,41 @@ async function sendTgSummary() {
   }
 }
 
+// ─── 获取流量（通知所有 VPS 立即上报） ───
+async function forceFetchAll() {
+  const btn = document.getElementById("btnForceFetch");
+  const st = document.getElementById("tgSumStatus");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "通知中…";
+  st.textContent = "";
+  try {
+    const data = await api("/api/force-report", { method: "POST" });
+    if (!data || !data.ok) {
+      st.textContent = "✗ " + (data?.error || "失败");
+      toast("获取流量失败：" + (data?.error || "未知错误"));
+    } else {
+      st.textContent = "✓ 已通知 " + (data.machines || 0) + " 台，约 1 分钟内上报";
+      toast("已通知所有 VPS 立即上报");
+      // 轮询刷新几次，等 agent 上报
+      let n = 0;
+      const tick = async () => {
+        n++;
+        await refresh();
+        if (n < 8) setTimeout(tick, 15000);
+      };
+      setTimeout(tick, 10000);
+    }
+  } catch (e) {
+    st.textContent = "✗ " + e.message;
+    toast("获取流量失败：" + e.message);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+    setTimeout(() => { if (st.textContent.startsWith("✓")) st.textContent = ""; }, 12000);
+  }
+}
+
 // ─── 设置 ───
 async function loadConfig() {
   const data = await api("/api/config");
@@ -899,6 +974,22 @@ export default {
       return new Response(null, { status: 302, headers: { Location: "/login", "Set-Cookie": sessionCookie("", 0) } });
     }
 
+    // GET /api/agent/pull — VPS 轮询是否需要立即上报（Bearer VPS token）
+    if (req.method === "GET" && url.pathname === "/api/agent/pull") {
+      if (!env.DB) return json({ ok: true, force_report: false });
+      const mid = String(req.headers.get("x-machine-id") || url.searchParams.get("mid") || "").trim();
+      if (!isValidMachineId(mid)) return json({ ok: false, error: "machine_id invalid" }, 400);
+      const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      const okGlobal = reportAuth(req, env);
+      if (!okGlobal) {
+        if (!token || !(await verifyVpsToken(env, mid, token))) {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+      }
+      const force_report = await agentShouldForceReport(env, mid);
+      return json({ ok: true, force_report, machine_id: mid });
+    }
+
     // 以下需登录
     if (!(await requireDash(req, env))) {
       if (url.pathname.startsWith("/api/")) return json({ ok: false, error: "unauthorized" }, 401);
@@ -955,6 +1046,23 @@ export default {
       const result = await tgSummary(env);
       if (!result.ok) return json(result, 400);
       return json(result);
+    }
+
+    // POST /api/force-report — 看板「获取流量」：通知所有 VPS 立即上报
+    if (req.method === "POST" && url.pathname === "/api/force-report") {
+      if (!env.DB) return json({ ok: false, error: missingDbError(env) }, 500);
+      try {
+        const force_at = await setForceReportAll(env);
+        const machines = await listMachines(env);
+        return json({
+          ok: true,
+          force_at,
+          machines: machines.length,
+          message: "已下发强制上报，在线 VPS 约 1 分钟内响应",
+        });
+      } catch (e) {
+        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
+      }
     }
 
     // GET / — 看板

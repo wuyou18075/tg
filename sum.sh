@@ -8,6 +8,8 @@ readonly SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 readonly TIMER_FILE="/etc/systemd/system/${APP_NAME}.timer"
 readonly CF_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-cf.service"
 readonly CF_TIMER_FILE="/etc/systemd/system/${APP_NAME}-cf.timer"
+readonly CF_POLL_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-poll.service"
+readonly CF_POLL_TIMER_FILE="/etc/systemd/system/${APP_NAME}-poll.timer"
 
 VNSTAT_WAS_INSTALLED=false
 TG_ENABLED=false
@@ -383,12 +385,26 @@ run_cf() {
   send_cf
 }
 
+# 看板「获取流量」：轮询 Worker 是否要求立即上报
+run_poll() {
+  [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]] || return 0
+  local base pull_url resp need
+  base="${CF_URL%/api/report}"
+  pull_url="${base}/api/agent/pull"
+  resp="$(curl --silent --show-error --fail-with-body     --connect-timeout 8 --max-time 20 --retry 1     --request GET     --header "Authorization: Bearer ${CF_TOKEN}"     --header "X-Machine-Id: ${MACHINE_ID}"     "${pull_url}" 2>/dev/null)" || return 0
+  need="$(jq -r '.force_report // false' <<<"${resp}" 2>/dev/null || printf false)"
+  if [[ "${need}" == "true" ]]; then
+    run_cf
+  fi
+}
+
 main() {
   umask 077; export LC_ALL=C
   load_config; require_cmds
   case "${1:-}" in
     --tg|--test) run_tg "${1}" ;;
     --cf)        run_cf ;;
+    --poll)      run_poll ;;
     "")
       if [[ -n "${TG_BOT_TOKEN}" && -n "${TG_CHAT_ID}" ]]; then run_tg; fi
       if [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]]; then run_cf; fi
@@ -468,7 +484,42 @@ write_cf_timer() {
 Description=Cloudflare traffic report (${cron_expr})
 [Timer]
 OnCalendar=${oncal}
+OnBootSec=30
 Persistent=true; AccuracySec=1min; Unit=${APP_NAME}-cf.service
+[Install]
+WantedBy=timers.target
+TIMER_EOF
+}
+
+write_poll_service_unit() {
+  cat >"${CF_POLL_SERVICE_FILE}" <<SERVICE_EOF
+[Unit]
+Description=Poll Cloudflare for force traffic report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${REPORT_SCRIPT} --poll
+User=root; Group=root; UMask=0077
+NoNewPrivileges=true; PrivateDevices=true; PrivateTmp=true
+ProtectKernelModules=true; ProtectKernelTunables=true
+ProtectSystem=strict; RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+}
+
+write_poll_timer() {
+  cat >"${CF_POLL_TIMER_FILE}" <<TIMER_EOF
+[Unit]
+Description=Poll Cloudflare force-report every minute
+[Timer]
+OnBootSec=20
+OnUnitActiveSec=60
+AccuracySec=10s
+Unit=${APP_NAME}-poll.service
 [Install]
 WantedBy=timers.target
 TIMER_EOF
@@ -479,9 +530,11 @@ enable_timers() {
   systemctl daemon-reload
   if [[ "${cf_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}-cf.timer"
+    systemctl enable --now "${APP_NAME}-poll.timer"
   else
     systemctl disable --now "${APP_NAME}-cf.timer" >/dev/null 2>&1 || true
-    rm -f "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}"
+    systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
+    rm -f "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}" "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"
   fi
   if [[ "${tg_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}.timer"
@@ -494,8 +547,8 @@ enable_timers() {
 
 send_test() {
   if [[ "${CF_ENABLED}" == "true" ]]; then
-    log '发送 CF 测试上报...'
-    "${REPORT_SCRIPT}" --cf || die 'CF 测试上报失败。请检查 cf_url / cf_token / m_id。'
+    log '安装完成，立即上报一次 CF 流量...'
+    "${REPORT_SCRIPT}" --cf || die 'CF 立即上报失败。请检查 cf_url / cf_token / m_id。'
   fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
     log '发送 Telegram 测试消息...'
@@ -521,6 +574,7 @@ print_summary() {
   printf '  配置文件：   %s（仅 root 可读）\n' "${CONFIG_FILE}"
   if [[ "${CF_ENABLED}" == "true" ]]; then
     printf '  立即 CF 上报：systemctl start %s-cf.service\n' "${APP_NAME}"
+    printf '  强制拉取：  看板点「获取流量」（VPS 约 1 分钟内响应）\n'
     printf '  查看日志：   journalctl -u %s-cf.service\n' "${APP_NAME}"
   fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
@@ -538,9 +592,11 @@ print_summary() {
 uninstall_app() {
   systemctl disable --now "${APP_NAME}.timer" >/dev/null 2>&1 || true
   systemctl disable --now "${APP_NAME}-cf.timer" >/dev/null 2>&1 || true
+  systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
   rm -f "${REPORT_SCRIPT}" "${CONFIG_FILE}" \
     "${SERVICE_FILE}" "${TIMER_FILE}" \
-    "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}"
+    "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}" \
+    "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"
   systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
   log '已卸载流量汇报服务；vnStat 软件及数据库未删除。'
 }
@@ -582,6 +638,8 @@ main() {
   if [[ "${CF_ENABLED}" == "true" ]]; then
     write_cf_service_unit
     write_cf_timer "${cf_cron}"
+    write_poll_service_unit
+    write_poll_timer
   fi
 
   # TG 服务/定时（可选）

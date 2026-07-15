@@ -10,17 +10,16 @@ readonly TIMER_FILE="/etc/systemd/system/${APP_NAME}.timer"
 VNSTAT_WAS_INSTALLED=false
 
 log()  { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
-die()  { printf 'Error: %s\n' "$*" >&2; exit 1; }
+die()  { printf '错误: %s\n' "$*" >&2; exit 1; }
 
-require_root()  { [[ "${EUID}" -eq 0 ]] || die 'run as root or use: sudo bash $0'; }
+require_root()  { [[ "${EUID}" -eq 0 ]] || die '请使用 root 用户运行，或执行：sudo bash $0'; }
 
 check_debian13() {
-  [[ -r /etc/os-release ]] || die 'cannot identify OS.'
-  # shellcheck disable=SC1091
+  [[ -r /etc/os-release ]] || die '无法识别操作系统。'
   source /etc/os-release
-  [[ "${ID:-}" == 'debian' ]] || die "Debian only; current: ${PRETTY_NAME:-unknown}."
-  [[ "${VERSION_ID:-}" == '13' ]] || die "Debian 13 only; current: ${VERSION_ID:-unknown}."
-  command -v systemctl >/dev/null 2>&1 || die 'no systemd detected.'
+  [[ "${ID:-}" == 'debian' ]] || die "此脚本仅支持 Debian，当前系统为 ${PRETTY_NAME:-未知}。"
+  [[ "${VERSION_ID:-}" == '13' ]] || die "此脚本面向 Debian 13，当前版本为 ${VERSION_ID:-未知}。"
+  command -v systemctl >/dev/null 2>&1 || die '未检测到 systemd。'
 }
 
 validate_token() { [[ "$1" =~ ^[0-9]{5,20}:[A-Za-z0-9_-]{20,100}$ ]]; }
@@ -29,50 +28,53 @@ validate_chat_id() { [[ "$1" =~ ^-?[0-9]{5,20}$ ]]; }
 resolve_token() {
   local val="${ttoken:-}"
   if [[ -z "${val}" ]]; then
-    read -r -s -p 'Telegram Bot Token: ' val; printf '\n'
-    validate_token "${val}" || die 'Bot Token invalid.'
+    read -r -s -p '请输入 Telegram Bot Token: ' val; printf '\n'
   fi
+  validate_token "${val}" || die 'Bot Token 格式无效。'
   printf '%s' "${val}"
 }
 
 resolve_chat_id() {
   local val="${tid:-}"
   if [[ -z "${val}" ]]; then
-    read -r -p 'Telegram Chat ID: ' val
-    validate_chat_id "${val}" || die 'Chat ID must be a number, may be negative.'
+    read -r -p '请输入 Telegram Chat ID: ' val
   fi
+  validate_chat_id "${val}" || die 'Chat ID 应为纯数字，可带负号。'
   printf '%s' "${val}"
 }
 
 install_deps() {
   if command -v vnstat >/dev/null 2>&1; then
-    log 'vnStat already installed, skipping.'
+    log 'vnStat 已安装，跳过安装步骤。'
     VNSTAT_WAS_INSTALLED=false
   else
     VNSTAT_WAS_INSTALLED=true
   fi
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y --no-install-recommends ca-certificates curl iproute2 jq
+  apt-get install -y --no-install-recommends ca-certificates curl iproute2 jq gawk
   if ${VNSTAT_WAS_INSTALLED}; then
-    log 'Installing vnStat...'; apt-get install -y --no-install-recommends vnstat
+    log '安装 vnStat...'; apt-get install -y --no-install-recommends vnstat
   fi
 }
 
 detect_interface() {
   local ifname
   ifname="$(ip -o route show default 2>/dev/null | awk '{print $5; exit}')"
-  [[ -n "${ifname}" ]] || die 'no default route interface found.'
-  [[ "${ifname}" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || die "bad interface name: ${ifname}"
-  [[ -d "/sys/class/net/${ifname}" ]] || die "interface missing: ${ifname}"
+  [[ -n "${ifname}" ]] || die '未找到默认路由对应的网卡。'
+  [[ "${ifname}" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || die "网卡名称异常：${ifname}"
+  [[ -d "/sys/class/net/${ifname}" ]] || die "网卡不存在：${ifname}"
   printf '%s' "${ifname}"
 }
 
 configure_vnstat() {
-  local ifname="$1"; log "Configuring vnStat on ${ifname}..."
+  local ifname="$1"; log "配置 vnStat 监控网卡 ${ifname}..."
   systemctl enable --now vnstat.service
-  vnstat --json -i "${ifname}" >/dev/null 2>&1 || vnstat --add -i "${ifname}" >/dev/null
-  systemctl restart vnstat.service
+  # 幂等：仅当该网卡尚未被 vnStat 监控时才添加，避免重复安装报错
+  if ! vnstat --json -i "${ifname}" >/dev/null 2>&1; then
+    vnstat --add -i "${ifname}" >/dev/null 2>&1 || true
+    systemctl restart vnstat.service
+  fi
 }
 
 write_config() {
@@ -96,12 +98,10 @@ TG_BOT_TOKEN=""
 TG_CHAT_ID=""
 INTERFACE=""
 
-log_error()  { printf 'Error: %s\n' "$*" >&2; }
+log_error()  { printf '错误: %s\n' "$*" >&2; }
 
 load_config() {
-  [[ -r "${CONFIG}" ]] || {
-    log_error "config unreadable: ${CONFIG}"; return 1
-  }
+  [[ -r "${CONFIG}" ]] || { log_error "配置文件不可读：${CONFIG}"; return 1; }
   while IFS='=' read -r key val; do
     case "${key}" in
       TG_BOT_TOKEN) TG_BOT_TOKEN="${val}" ;;
@@ -109,18 +109,14 @@ load_config() {
       INTERFACE)    INTERFACE="${val}"     ;;
     esac
   done <"${CONFIG}"
-  [[ "${TG_BOT_TOKEN}" =~ ^[0-9]{5,20}:[A-Za-z0-9_-]{20,100}$ ]] || {
-    log_error "TG_BOT_TOKEN invalid."; return 1; }
-  [[ "${TG_CHAT_ID}" =~ ^-?[0-9]{5,20}$ ]] || {
-    log_error "TG_CHAT_ID invalid."; return 1; }
-  [[ "${INTERFACE}" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || {
-    log_error "INTERFACE invalid."; return 1; }
+  [[ "${TG_BOT_TOKEN}" =~ ^[0-9]{5,20}:[A-Za-z0-9_-]{20,100}$ ]] || { log_error "TG_BOT_TOKEN 格式无效。"; return 1; }
+  [[ "${TG_CHAT_ID}" =~ ^-?[0-9]{5,20}$ ]] || { log_error "TG_CHAT_ID 格式无效。"; return 1; }
+  [[ "${INTERFACE}" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || { log_error "INTERFACE 格式无效。"; return 1; }
 }
 
 require_cmds() {
-  for cmd in curl date hostname jq numfmt vnstat; do
-    command -v "${cmd}" >/dev/null 2>&1 || {
-      log_error "missing command: ${cmd}"; return 1; }
+  for cmd in awk curl date hostname jq vnstat; do
+    command -v "${cmd}" >/dev/null 2>&1 || { log_error "缺少命令：${cmd}"; return 1; }
   done
 }
 
@@ -132,7 +128,7 @@ vnstat_json() {
       printf '%s' "${out}"; return 0; }
     sleep 2
   done
-  log_error "cannot read traffic data for interface ${INTERFACE}."
+  log_error "无法读取网卡 ${INTERFACE} 的流量数据。"
   return 1
 }
 
@@ -152,9 +148,10 @@ extract_bytes() {
 }
 
 fmt() {
+  # 统一按 GB 显示（1GB=1000^3 字节），保留 3 位小数，如 1MB -> 0.001GB
   local bytes="$1"
-  [[ "${bytes}" =~ ^[0-9]+$ ]] || { printf '0B'; return; }
-  numfmt --to=iec-i --suffix=B --format='%.2f' "${bytes}"
+  [[ "${bytes}" =~ ^[0-9]+$ ]] || bytes=0
+  awk -v b="${bytes}" 'BEGIN { printf "%.3fGB", b / 1000000000 }'
 }
 
 send_tg() {
@@ -168,9 +165,9 @@ send_tg() {
     --data-urlencode "chat_id=${TG_CHAT_ID}" \
     --data-urlencode "text=${msg}" \
     --data "disable_web_page_preview=true")" || {
-    log_error "Telegram API request failed."; return 1; }
+    log_error "Telegram API 请求失败。"; return 1; }
   jq -e '.ok == true' >/dev/null 2>&1 <<<"${resp}" || {
-    log_error "Telegram failed: $(jq -r '.description // "unknown"' <<<"${resp}")"
+    log_error "Telegram 返回失败：$(jq -r '.description // "未知错误"' <<<"${resp}")"
     return 1
   }
 }
@@ -178,7 +175,7 @@ send_tg() {
 build_and_send() {
   local json="" year="" month="" day=""
   local tr_rx=0 tr_tx=0 mr_rx=0 mr_tx=0
-  local title="Traffic Report"
+  local title="流量日报"
   local msg=""
 
   json="$(vnstat_json)"
@@ -191,22 +188,25 @@ build_and_send() {
   mr_rx="$(extract_bytes "${json}" month rx "${year}" "${month}")"
   mr_tx="$(extract_bytes "${json}" month tx "${year}" "${month}")"
 
-  [[ "${1:-}" == "--test" ]] && title="[Install Test]"
+  [[ "${1:-}" == "--test" ]] && title="[安装测试]"
 
-  msg="${title}
-Host: $(hostname)
-Interface: ${INTERFACE}
-Time: $(date '+%F %T %Z')
+  msg="━━━━━━━━━━━━━━━━━━━━━━
+${title}
+━━━━━━━━━━━━━━━━━━━━━━
+主机：$(hostname)
+网卡：${INTERFACE}
+时间：$(date '+%F %T %Z')
 
-Today (up to send time)
-Inbound:  $(fmt "${tr_rx}")
-Outbound: $(fmt "${tr_tx}")
-Total:    $(fmt "$((tr_rx + tr_tx))")
+今日（截至发送时）
+入站：$(fmt "${tr_rx}")
+出站：$(fmt "${tr_tx}")
+合计：$(fmt "$((tr_rx + tr_tx))")
 
-Month (${year}-$(printf '%02d' "${month}"))
-Inbound:  $(fmt "${mr_rx}")
-Outbound: $(fmt "${mr_tx}")
-Total:    $(fmt "$((mr_rx + mr_tx))")"
+本月（${year}-$(printf '%02d' "${month}")）
+入站：$(fmt "${mr_rx}")
+出站：$(fmt "${mr_tx}")
+合计：$(fmt "$((mr_rx + mr_tx))")
+━━━━━━━━━━━━━━━━━━━━━━"
 
   send_tg "${msg}"
 }
@@ -268,24 +268,24 @@ TIMER_EOF
 }
 
 send_test() {
-  log 'Sending test message...'; "${REPORT_SCRIPT}" --test || \
-    die 'Test send failed. Check Bot is in chat and Chat ID is correct.'
+  log '发送测试消息...'; "${REPORT_SCRIPT}" --test || \
+    die '测试发送失败。请确认 Bot 已加入目标会话，且 Chat ID 正确。'
 }
 
 print_summary() {
   local ifname="$1"
-  printf '\nInstall complete.\n'
-  printf '  Interface:   %s\n'   "${ifname}"
-  printf '  Schedule:    20:00 daily (server local time)\n'
-  printf '  Config:      %s (root only)\n'  "${CONFIG_FILE}"
-  printf '  Status:      systemctl status %s.timer\n'   "${APP_NAME}"
-  printf '  Manual run:  systemctl start %s.service\n'  "${APP_NAME}"
-  printf '  Logs:        journalctl -u %s.service\n'    "${APP_NAME}"
-  printf '  Uninstall:   bash $0 --uninstall\n'
+  printf '\n安装完成。\n'
+  printf '  监控网卡：  %s\n'   "${ifname}"
+  printf '  汇报时间：  每天 20:00（服务器本地时区）\n'
+  printf '  配置文件：  %s（仅 root 可读）\n'  "${CONFIG_FILE}"
+  printf '  查看定时器：systemctl status %s.timer\n'   "${APP_NAME}"
+  printf '  立即发送：  systemctl start %s.service\n'  "${APP_NAME}"
+  printf '  查看日志：  journalctl -u %s.service\n'    "${APP_NAME}"
+  printf '  卸载：      bash $0 --uninstall\n'
   if ${VNSTAT_WAS_INSTALLED}; then
-    printf '\nNote: vnStat newly installed; stats start now, no backfill.\n'
+    printf '\n注意：vnStat 是本次新安装，只能统计安装后的流量，无法补算历史。\n'
   else
-    printf '\nvnStat existed; historical stats preserved.\n'
+    printf '\nvnStat 已存在，流量数据包含之前的统计记录。\n'
   fi
 }
 
@@ -293,7 +293,7 @@ uninstall_app() {
   systemctl disable --now "${APP_NAME}.timer" >/dev/null 2>&1 || true
   rm -f "${REPORT_SCRIPT}" "${CONFIG_FILE}" "${SERVICE_FILE}" "${TIMER_FILE}"
   systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
-  log 'Uninstalled traffic report service; vnStat DB kept.'
+  log '已卸载流量汇报服务；vnStat 软件及数据库未删除。'
 }
 
 main() {

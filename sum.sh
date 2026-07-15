@@ -546,23 +546,24 @@ uninstall_app() {
 }
 
 main() {
-  local ifname m_id cf_token cf_url tg_token tg_cid tg_time cf_cron
+  # 注意：不可 local m_id/cf_token/cf_url，会遮蔽命令行传入的环境变量
+  local ifname mid_val cf_token_val cf_url_val tg_token tg_cid tg_time cf_cron
   require_root
   if [[ "${1:-}" == '--uninstall' ]]; then uninstall_app; return; fi
   check_debian13
 
-  # 解析参数
+  # 解析参数（resolve_* 读取环境变量 t_token/m_id/cf_* 等）
   tg_token="$(resolve_t_token)"
   tg_cid="$(resolve_t_id)"
   tg_time="$(resolve_t_time)"
   if [[ -n "${tg_token}" && -n "${tg_cid}" ]]; then
     TG_ENABLED=true
   fi
-  m_id="$(resolve_m_id)"
-  cf_token="$(resolve_cf_token)"
-  cf_url="$(resolve_cf_url)"
+  mid_val="$(resolve_m_id)"
+  cf_token_val="$(resolve_cf_token)"
+  cf_url_val="$(resolve_cf_url)"
   cf_cron="$(resolve_cf_time)"
-  if [[ -n "${cf_url}" && -n "${cf_token}" && -n "${m_id}" ]]; then
+  if [[ -n "${cf_url_val}" && -n "${cf_token_val}" && -n "${mid_val}" ]]; then
     CF_ENABLED=true
   fi
 
@@ -574,7 +575,7 @@ main() {
   install_deps
   ifname="$(detect_interface)"
   configure_vnstat "${ifname}"
-  write_config "${ifname}" "${m_id}" "${cf_token}" "${cf_url}" "${tg_token}" "${tg_cid}"
+  write_config "${ifname}" "${mid_val}" "${cf_token_val}" "${cf_url_val}" "${tg_token}" "${tg_cid}"
   write_reporter
 
   # CF 服务/定时（可选）
@@ -593,7 +594,7 @@ main() {
     "$( [[ "${TG_ENABLED}" == "true" ]] && printf 1 || printf 0 )" \
     "$( [[ "${CF_ENABLED}" == "true" ]] && printf 1 || printf 0 )"
   send_test
-  print_summary "${ifname}" "${tg_time}" "${cf_cron}" "${m_id}"
+  print_summary "${ifname}" "${tg_time}" "${cf_cron}" "${mid_val}"
 }
 
 main "$@"

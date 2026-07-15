@@ -243,8 +243,8 @@ async function deleteVpsToken(env, mid) {
 
 // ─── 生成一键命令 ───
 
-async function generateCommand(env, request, mid) {
-  mid = String(mid || "").trim();
+async function generateCommand(env, request, rawMid) {
+  const mid = String(rawMid || "").trim();
   // 先校验再写库，避免无效 ID 污染 vps_tokens
   if (!isValidMachineId(mid)) {
     return {
@@ -782,8 +782,7 @@ export default {
       if (!env.DB) return json({ ok: false, error: "DB not bound" }, 500);
       let body;
       try { body = await req.json(); } catch { return json({ ok: false, error: "invalid json" }, 400); }
-      const mid = body.machine_id || req.headers.get("x-machine-id");
-      mid = String(mid || "").trim();
+      const mid = String(body.machine_id || req.headers.get("x-machine-id") || "").trim();
       if (!isValidMachineId(mid)) {
         return json({ ok: false, error: "machine_id invalid" }, 400);
       }
@@ -835,9 +834,8 @@ export default {
     // GET /api/history
     if (req.method === "GET" && url.pathname === "/api/history") {
       if (!env.DB) return json({ ok: true, points: [] });
-      const mid = url.searchParams.get("mid") || "";
+      const mid = String(url.searchParams.get("mid") || "").trim();
       const hours = Math.min(24 * 90, Math.max(1, Number(url.searchParams.get("hours") || 168)));
-      mid = String(mid || "").trim();
       if (!isValidMachineId(mid)) return json({ ok: false, error: "mid invalid" }, 400);
       return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
     }
@@ -853,7 +851,7 @@ export default {
 
     // GET /api/generate — 生成一键命令（含独立密码）
     if (req.method === "GET" && url.pathname === "/api/generate") {
-      const mid = (url.searchParams.get("mid") || "").trim();
+      const mid = String(url.searchParams.get("mid") || "").trim();
       const result = await generateCommand(env, req, mid);
       if (!result.ok) return json(result, 400);
       return json(result);

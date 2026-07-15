@@ -231,19 +231,20 @@ async function deleteVpsToken(env, mid) {
 // ─── 生成一键命令 ───
 
 async function generateCommand(env, request, mid) {
+  mid = String(mid || "").trim();
+  // 先校验再写库，避免无效 ID 污染 vps_tokens
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+    return {
+      ok: false,
+      error: "机器 ID 应为 1-64 位字母数字及 ._-: 组合（例如 hk-1 / jp-2 / us-west），不要空格或中文",
+    };
+  }
+
   const cfg = await getConfig(env);
   const url = new URL(request.url);
   const cf_url = url.origin + "/api/report";
-
-  // 生成/获取独立 token
   const vpsToken = await getOrCreateVpsToken(env, mid);
-
-  // cf_time 默认每小时
   const cf_time = cfg.cf_time || "0 * * * *";
-
-  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
-    return { ok: false, error: "机器 ID 应为 1-64 位字母数字及 ._-: 组合" };
-  }
 
   // 命令不含 t_token/t_id — VPS 只上报 CF，TG 从看板汇总
   const cmd = `m_id='${mid}' \\
@@ -509,7 +510,7 @@ tr.active{background:#1a2740}
     <h2>添加 VPS</h2>
     <p class="desc">输入机器 ID，生成独立密码和安装命令。复制到 VPS 执行即可。</p>
     <label for="vpsMid">机器 ID</label>
-    <input id="vpsMid" type="text" placeholder="hk-1 / jp-2 / us-west" autocomplete="off">
+    <input id="vpsMid" type="text" placeholder="hk-1 / jp-2 / us-west（仅英文数字 ._-:）" autocomplete="off">
     <div id="vpsCmdRegion" style="display:none">
       <div class="cmd-ok" id="vpsOk"></div>
       <div class="cmd-box" id="vpsCmd"></div>
@@ -707,6 +708,10 @@ function closeAddVps() {
 async function genCmd() {
   const mid = document.getElementById("vpsMid").value.trim();
   if (!mid) { toast("请输入机器 ID"); return; }
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(mid)) {
+    toast("机器 ID 仅限字母数字及 ._-:（如 hk-1），不要空格/中文");
+    return;
+  }
   const btn = document.querySelector("#vpsBtnRegion .green");
   btn.disabled = true; btn.textContent = "生成中…";
   try {
@@ -832,7 +837,7 @@ export default {
 
     // GET /api/generate — 生成一键命令（含独立密码）
     if (req.method === "GET" && url.pathname === "/api/generate") {
-      const mid = url.searchParams.get("mid") || "";
+      const mid = (url.searchParams.get("mid") || "").trim();
       const result = await generateCommand(env, req, mid);
       if (!result.ok) return json(result, 400);
       return json(result);

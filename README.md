@@ -116,7 +116,7 @@ bash /usr/local/sbin/traffic-telegram-report --uninstall 2>/dev/null || bash sum
 要点：
 
 - **没有长连接、没有轮询**。VPS 不监听 Worker，Worker 也不连 VPS 的上报口；平时只有 ① 按小时主动上报。
-- **② 需要回调可达**：VPS 要有公网 IP / 放行回调端口（默认 `19840`），Worker 才能推送 `/force-report`；连不上的机器「获取流量」会失败，但不影响 ① 的定时上报。
+- **② 需要回调可达**：VPS 要有公网 IP / 放行回调端口（默认 `19840`，看板生成命令时可改），Worker 才能推送 `/force-report`；端口可在添加/更新 VPS 弹框配置，连不上的机器「获取流量」会失败，但不影响 ① 的定时上报。
 - **每台 VPS 的 `access_token` 互不相同**，互不影响；泄露一台只需在看板「更新注册」轮换该机密钥。
 - **`TG_TOKEN` 与上报鉴权无关**：它只用于 Worker 发 TG 消息（链路 ③）。VPS 能不能上报/被推送只看 `access_token`。
 
@@ -247,6 +247,7 @@ m_id='香港-1' \
 access_token='看板生成的访问密钥' \
 cf_url='https://cf-tg-web.xxx.workers.dev/api/report' \
 cf_time='0 * * * *' \
+cb_port='19840' \
   bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
 ```
 
@@ -274,6 +275,7 @@ cf_time='0 * * * *' \
 | `cf_url` | Worker 上报地址 `https://.../api/report` | 看板生成 |
 | `access_token` | 上报与回调的访问密钥 | 看板「添加 VPS」生成，VPS 用它上报/验证 |
 | `cf_time` | CF 上报 cron（5 段） | `0 * * * *` |
+| `cb_port` | 回调端口（「获取流量」推送用） | `19840`（1024-65535 可改；需 VPS 放行） |
 | `m_id` | 机器 ID（支持中文，1-64 字） | 看板添加时输入 |
 
 规则：

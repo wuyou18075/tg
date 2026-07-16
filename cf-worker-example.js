@@ -102,6 +102,24 @@ function isValidCallbackUrl(u) {
   }
 }
 
+/** 回调端口校验：1024-65535 */
+function isValidPort(p) {
+  const n = Number(p);
+  return /^\d+$/.test(String(p)) && n >= 1024 && n <= 65535;
+}
+/** 默认回调端口 */
+const DEFAULT_CB_PORT = 19840;
+/** 从 callback_url 解析端口；失败回退默认 */
+function portFromCallback(cb) {
+  try {
+    const u = new URL(cb);
+    if (u.port) return u.port;
+    return u.protocol === "https:" ? "443" : String(DEFAULT_CB_PORT);
+  } catch {
+    return String(DEFAULT_CB_PORT);
+  }
+}
+
 function toHex(buf) {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -540,14 +558,16 @@ async function deleteMachine(env, mid) {
   ]);
 }
 
-function buildInstallCommand(mid, accessToken, cf_url, cf_time) {
+function buildInstallCommand(mid, accessToken, cf_url, cf_time, cb_port) {
   const midQ = bashSingleQuote(mid);
   const timeQ = bashSingleQuote(cf_time || "0 * * * *");
+  const port = isValidPort(cb_port) ? String(cb_port) : String(DEFAULT_CB_PORT);
   return [
     "m_id='" + midQ + "' \\",
     "access_token='" + accessToken + "' \\",
     "cf_url='" + cf_url + "' \\",
     "cf_time='" + timeQ + "' \\",
+    "cb_port='" + port + "' \\",
     "  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')",
   ].join("\n");
 }
@@ -577,7 +597,11 @@ async function generateCommand(env, request, rawMid) {
   }
   const url = new URL(request.url);
   const cf_url = url.origin + "/api/report";
-  const cmd = buildInstallCommand(mid, vpsToken, cf_url, cf_time);
+  const cb_port = String(url.searchParams.get("cb_port") || "").trim();
+  if (cb_port && !isValidPort(cb_port)) {
+    return { ok: false, error: "cb_port 应为 1024-65535" };
+  }
+  const cmd = buildInstallCommand(mid, vpsToken, cf_url, cf_time, cb_port || DEFAULT_CB_PORT);
 
   return {
     ok: true,
@@ -613,6 +637,14 @@ async function generateUpdateCommand(env, request, body) {
   if (!cf_url.startsWith("https://") || cf_url.includes(" ")) {
     return { ok: false, error: "cf_url 应为 https:// 开头" };
   }
+  // cb_port：未提供则复用该机之前的端口（从 callback_url 解析），再不行用默认
+  let cb_port = String((body && body.cb_port) || "").trim();
+  if (cb_port) {
+    if (!isValidPort(cb_port)) return { ok: false, error: "cb_port 应为 1024-65535" };
+  } else {
+    const row0 = await env.DB.prepare(`SELECT callback_url FROM machines WHERE machine_id = ?`).bind(mid).first();
+    cb_port = row0 && row0.callback_url ? portFromCallback(row0.callback_url) : String(DEFAULT_CB_PORT);
+  }
 
   let vpsToken;
   try {
@@ -641,13 +673,14 @@ async function generateUpdateCommand(env, request, body) {
     return { ok: false, error: "生成失败：" + (e && e.message ? e.message : String(e)) };
   }
 
-  const cmd = buildInstallCommand(mid, vpsToken, cf_url, cf_time);
+  const cmd = buildInstallCommand(mid, vpsToken, cf_url, cf_time, cb_port);
   return {
     ok: true,
     command: cmd,
     machine_id: mid,
     cf_url,
     cf_time,
+    cb_port,
     token: vpsToken,
     token_preview: vpsToken.slice(0, 8) + "...",
   };
@@ -678,6 +711,7 @@ async function getMachineReg(env, request, mid) {
     access_token: token,
     cf_url: url.origin + "/api/report",
     cf_time: cfg.cf_time || "0 * * * *",
+    cb_port: row && row.callback_url ? portFromCallback(row.callback_url) : String(DEFAULT_CB_PORT),
   };
 }
 
@@ -1412,6 +1446,8 @@ td.ops button{margin-right:4px}
     <p class="desc">输入机器 ID，生成独立密码和安装命令。复制到 VPS 执行即可。</p>
     <label for="vpsMid">机器 ID</label>
     <input id="vpsMid" type="text" placeholder="香港-1 / hk-1 / jp-2" autocomplete="off">
+    <label for="vpsCbPort">回调端口（「获取流量」推送用，需 VPS 放行）</label>
+    <input id="vpsCbPort" type="text" value="19840" placeholder="19840">
     <div id="vpsCmdRegion" style="display:none">
       <div class="cmd-ok" id="vpsOk"></div>
       <div class="cmd-box" id="vpsCmd"></div>
@@ -1443,6 +1479,8 @@ td.ops button{margin-right:4px}
     <input id="upUrl" type="text" autocomplete="off" spellcheck="false">
     <label for="upTime">cf_time（cron）</label>
     <input id="upTime" type="text" placeholder="0 * * * *" autocomplete="off">
+    <label for="upCbPort">回调端口（cb_port）</label>
+    <input id="upCbPort" type="text" placeholder="19840" autocomplete="off">
     <label style="display:flex;align-items:center;gap:8px;margin:10px 0;cursor:pointer">
       <input id="upRotate" type="checkbox" style="width:auto;margin:0"> 轮换新密钥（旧 token 立即失效）
     </label>
@@ -2234,6 +2272,8 @@ async function openUpdateVps(mid) {
   document.getElementById("upToken").value = "加载中…";
   document.getElementById("upUrl").value = "";
   document.getElementById("upTime").value = "";
+  const upCbInit = document.getElementById("upCbPort");
+  if (upCbInit) upCbInit.value = "";
   document.getElementById("upRotate").checked = false;
   try {
     const data = await api("/api/machine-reg?mid=" + encodeURIComponent(mid));
@@ -2246,6 +2286,8 @@ async function openUpdateVps(mid) {
     document.getElementById("upToken").value = data.access_token || "";
     document.getElementById("upUrl").value = data.cf_url || "";
     document.getElementById("upTime").value = data.cf_time || "0 * * * *";
+    const upCb = document.getElementById("upCbPort");
+    if (upCb) upCb.value = data.cb_port || "19840";
   } catch (e) {
     toast("加载失败：" + (e && e.message ? e.message : String(e)));
     closeUpdateVps();
@@ -2261,14 +2303,18 @@ async function confirmUpdateVps() {
   const access_token = document.getElementById("upToken").value.trim();
   const cf_url = document.getElementById("upUrl").value.trim();
   const cf_time = document.getElementById("upTime").value.trim();
+  const cb_port = (document.getElementById("upCbPort") || {}).value || "";
   const rotate_token = document.getElementById("upRotate").checked;
   if (!machine_id) { toast("请填写机器 ID"); return; }
+  if (cb_port && (!/^\d+$/.test(cb_port) || Number(cb_port) < 1024 || Number(cb_port) > 65535)) {
+    toast("回调端口应为 1024-65535"); return;
+  }
   const btn = document.querySelector("#upBtnRegion .green");
   if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
   try {
     const data = await api("/api/generate-update", {
       method: "POST",
-      body: JSON.stringify({ machine_id, access_token, cf_url, cf_time, rotate_token }),
+      body: JSON.stringify({ machine_id, access_token, cf_url, cf_time, cb_port, rotate_token }),
     });
     if (!data || !data.ok) {
       toast(data?.error || "生成失败");
@@ -2322,6 +2368,7 @@ async function deleteMachineRow(mid) {
 function openAddVps() {
   document.getElementById("modalVps").classList.add("open");
   document.getElementById("vpsMid").value = "";
+  document.getElementById("vpsCbPort").value = "19840";
   document.getElementById("vpsCmdRegion").style.display = "none";
   document.getElementById("vpsBtnRegion").style.display = "flex";
   document.getElementById("vpsMid").focus();
@@ -2338,10 +2385,14 @@ async function genCmd() {
     toast("机器 ID 1-64 字，支持中英文/数字/._-:（如 香港-1）");
     return;
   }
+  const cbPort = document.getElementById("vpsCbPort").value.trim() || "19840";
+  if (!/^\d+$/.test(cbPort) || Number(cbPort) < 1024 || Number(cbPort) > 65535) {
+    toast("回调端口应为 1024-65535"); return;
+  }
   const btn = document.querySelector("#vpsBtnRegion .green");
   if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
   try {
-    const data = await api("/api/generate?mid=" + encodeURIComponent(mid));
+    const data = await api("/api/generate?mid=" + encodeURIComponent(mid) + "&cb_port=" + encodeURIComponent(cbPort));
     if (!data || !data.ok) { toast(data?.error || "生成失败"); return; }
     document.getElementById("vpsOk").textContent = "✓ 命令已生成（独立密码： " + (data.token||"") + "）";
     document.getElementById("vpsCmd").textContent = data.command;

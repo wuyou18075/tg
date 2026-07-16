@@ -1866,122 +1866,221 @@ function dashboardPage() {
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 <style>
-:root{color-scheme:dark}
+:root, html[data-theme="default"]{
+  color-scheme:dark;
+  --bg:#0b1220; --bg2:#0e1628; --panel:#121a2b; --panel2:#0b1220;
+  --line:#243049; --line2:#1e2a42; --border:#33415f;
+  --text:#e8eefc; --muted:#8aa0c6; --label:#9fb3d9;
+  --hover:#1a2740; --accent:#3b82f6; --accent2:#2563eb;
+  --ok:#16a34a; --ok2:#15803d; --warn:#d97706; --danger:#b91c1c; --danger2:#991b1b;
+  --badge-bg:#1e3a5f; --badge-fg:#93c5fd; --badge-off-bg:#3f1d1d; --badge-off-fg:#fca5a5;
+  --rx:#60a5fa; --tx:#34d399; --rx-soft:rgba(96,165,250,.85); --tx-soft:rgba(52,211,153,.85);
+  --rx-fill:rgba(96,165,250,.15); --tx-fill:rgba(52,211,153,.12);
+  --grid:#1e2a42; --glow:rgba(59,130,246,.18); --header-glow:transparent;
+  --radius:12px; --radius-sm:8px;
+}
+html[data-theme="cyber"]{
+  --bg:#070b14; --bg2:#0a1020; --panel:#0d1528; --panel2:#08101c;
+  --line:#1c2d4d; --line2:#15233d; --border:#2a4570;
+  --text:#eaf6ff; --muted:#7fb0d8; --label:#9ec9ef;
+  --hover:#12203a; --accent:#22d3ee; --accent2:#06b6d4;
+  --ok:#10b981; --ok2:#059669; --warn:#f59e0b; --danger:#f43f5e; --danger2:#e11d48;
+  --badge-bg:#0e3a4a; --badge-fg:#67e8f9; --badge-off-bg:#4a1028; --badge-off-fg:#fda4af;
+  --rx:#22d3ee; --tx:#e879f9; --rx-soft:rgba(34,211,238,.88); --tx-soft:rgba(232,121,249,.88);
+  --rx-fill:rgba(34,211,238,.14); --tx-fill:rgba(232,121,249,.12);
+  --grid:#16304f; --glow:rgba(34,211,238,.22); --header-glow:linear-gradient(90deg,rgba(34,211,238,.08),rgba(232,121,249,.08));
+}
+html[data-theme="matrix"]{
+  --bg:#050a07; --bg2:#08140e; --panel:#0b1811; --panel2:#07110c;
+  --line:#1a3a28; --line2:#143022; --border:#24553a;
+  --text:#d8ffe8; --muted:#7fbf98; --label:#9fd9b4;
+  --hover:#10281b; --accent:#22c55e; --accent2:#16a34a;
+  --ok:#4ade80; --ok2:#22c55e; --warn:#eab308; --danger:#ef4444; --danger2:#dc2626;
+  --badge-bg:#0f3a22; --badge-fg:#86efac; --badge-off-bg:#3a1515; --badge-off-fg:#fca5a5;
+  --rx:#4ade80; --tx:#a3e635; --rx-soft:rgba(74,222,128,.88); --tx-soft:rgba(163,230,53,.85);
+  --rx-fill:rgba(74,222,128,.14); --tx-fill:rgba(163,230,53,.12);
+  --grid:#163626; --glow:rgba(34,197,94,.18); --header-glow:linear-gradient(90deg,rgba(34,197,94,.1),transparent);
+}
+html[data-theme="aurora"]{
+  --bg:#0c0a16; --bg2:#120f22; --panel:#16122b; --panel2:#0f0c1c;
+  --line:#2b2450; --line2:#221c40; --border:#433a72;
+  --text:#f0e9ff; --muted:#a89bcf; --label:#c4b5fd;
+  --hover:#221b40; --accent:#a78bfa; --accent2:#8b5cf6;
+  --ok:#34d399; --ok2:#10b981; --warn:#fbbf24; --danger:#f472b6; --danger2:#ec4899;
+  --badge-bg:#2e1f55; --badge-fg:#ddd6fe; --badge-off-bg:#3f1630; --badge-off-fg:#f9a8d4;
+  --rx:#a78bfa; --tx:#38bdf8; --rx-soft:rgba(167,139,250,.88); --tx-soft:rgba(56,189,248,.88);
+  --rx-fill:rgba(167,139,250,.15); --tx-fill:rgba(56,189,248,.12);
+  --grid:#2a2250; --glow:rgba(167,139,250,.22); --header-glow:linear-gradient(90deg,rgba(167,139,250,.12),rgba(56,189,248,.08));
+}
+html[data-theme="ice"]{
+  --bg:#071018; --bg2:#0a1622; --panel:#0d1b2a; --panel2:#08131d;
+  --line:#1d3348; --line2:#172a3c; --border:#2d4d66;
+  --text:#e8f4ff; --muted:#8fb3c9; --label:#a9c7db;
+  --hover:#123047; --accent:#38bdf8; --accent2:#0ea5e9;
+  --ok:#2dd4bf; --ok2:#14b8a6; --warn:#fbbf24; --danger:#fb7185; --danger2:#f43f5e;
+  --badge-bg:#0f3a52; --badge-fg:#7dd3fc; --badge-off-bg:#3a1a22; --badge-off-fg:#fda4af;
+  --rx:#38bdf8; --tx:#2dd4bf; --rx-soft:rgba(56,189,248,.88); --tx-soft:rgba(45,212,191,.88);
+  --rx-fill:rgba(56,189,248,.14); --tx-fill:rgba(45,212,191,.12);
+  --grid:#183246; --glow:rgba(56,189,248,.2); --header-glow:linear-gradient(90deg,rgba(56,189,248,.1),rgba(45,212,191,.06));
+}
+html[data-theme="ember"]{
+  --bg:#100a07; --bg2:#1a100a; --panel:#1c120c; --panel2:#140d09;
+  --line:#3a2418; --line2:#2c1b12; --border:#5a3824;
+  --text:#fff1e6; --muted:#c4a28a; --label:#e0b894;
+  --hover:#2a1810; --accent:#f59e0b; --accent2:#d97706;
+  --ok:#84cc16; --ok2:#65a30d; --warn:#fb923c; --danger:#ef4444; --danger2:#dc2626;
+  --badge-bg:#4a2a10; --badge-fg:#fcd34d; --badge-off-bg:#3f1515; --badge-off-fg:#fca5a5;
+  --rx:#fbbf24; --tx:#fb7185; --rx-soft:rgba(251,191,36,.9); --tx-soft:rgba(251,113,133,.88);
+  --rx-fill:rgba(251,191,36,.14); --tx-fill:rgba(251,113,133,.12);
+  --grid:#3a2418; --glow:rgba(245,158,11,.2); --header-glow:linear-gradient(90deg,rgba(245,158,11,.12),rgba(251,113,133,.06));
+}
 *{box-sizing:border-box}
-body{margin:0;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
-header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #1e2a42;background:#0e1628}
-header h1{font-size:18px;margin:0}
+body{margin:0;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line2);background:var(--bg2);background-image:var(--header-glow)}
+header h1{font-size:18px;margin:0;letter-spacing:.2px}
 .nav{display:flex;gap:4px;margin-left:16px}
-.nav a{color:#8aa0c6;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:13px;cursor:pointer}
-.nav a.active,.nav a:hover{background:#1a2740;color:#e8eefc}
-.muted{color:#8aa0c6;font-size:13px}
+.nav a{color:var(--muted);text-decoration:none;padding:6px 12px;border-radius:var(--radius-sm);font-size:13px;cursor:pointer}
+.nav a.active,.nav a:hover{background:var(--hover);color:var(--text)}
+.muted{color:var(--muted);font-size:13px}
 .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-select,button{background:#121a2b;color:#e8eefc;border:1px solid #33415f;border-radius:8px;padding:8px 10px;font-size:13px;outline:none}
+select,button{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;font-size:13px;outline:none}
 button{cursor:pointer}
-button.primary{background:#3b82f6;border-color:#3b82f6;font-weight:600}
-button.primary:hover{background:#2563eb}
-button.green{background:#16a34a;border-color:#16a34a;font-weight:600}
-button.green:hover{background:#15803d}
-button.warn{background:#d97706;border-color:#d97706;font-weight:600}
+button.primary{background:var(--accent);border-color:var(--accent);font-weight:600;color:#fff}
+button.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+button.green{background:var(--ok);border-color:var(--ok);font-weight:600;color:#fff}
+button.green:hover{background:var(--ok2);border-color:var(--ok2)}
+button.warn{background:var(--warn);border-color:var(--warn);font-weight:600;color:#111}
 main{padding:16px 20px 40px;max-width:1200px;margin:0 auto}
 .page{display:none}
 .page.active{display:block}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
-.card{background:#121a2b;border:1px solid #243049;border-radius:12px;padding:14px}
-.card .label{font-size:12px;color:#8aa0c6}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:0 0 24px var(--glow)}
+.card .label{font-size:12px;color:var(--muted)}
 .card .val{font-size:20px;font-weight:700;margin-top:6px}
-.panel{background:#121a2b;border:1px solid #243049;border-radius:12px;padding:14px;margin-bottom:16px}
-.panel h2{font-size:14px;margin:0 0 12px;color:#9fb3d9;font-weight:600}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:16px}
+.panel h2{font-size:14px;margin:0 0 12px;color:var(--label);font-weight:600}
 .chart-wrap{position:relative;height:280px}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{padding:10px 8px;border-bottom:1px solid #243049;text-align:left}
-th{color:#9fb3d9;font-weight:600}
+th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--label);font-weight:600}
 tr{cursor:pointer}
-tr.active{background:#1a2740}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:#1e3a5f;color:#93c5fd}
-.badge.off{background:#3f1d1d;color:#fca5a5}
+tr.active{background:var(--hover)}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:var(--badge-bg);color:var(--badge-fg)}
+.badge.off{background:var(--badge-off-bg);color:var(--badge-off-fg)}
 button.sm{padding:4px 8px;font-size:12px;border-radius:6px}
-button.danger{background:#b91c1c;border-color:#b91c1c;color:#fff}
-button.danger:hover{background:#991b1b}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button.danger:hover{background:var(--danger2);border-color:var(--danger2)}
 td.ops{white-space:nowrap;min-width:240px}
 td.ops button{margin-right:4px}
-.settings-form{max-width:520px}
-.settings-form label{display:block;font-size:12px;color:#9fb3d9;margin:14px 0 4px}
-.settings-form input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #33415f;background:#0b1220;color:#e8eefc;outline:none}
-.settings-form input:focus{border-color:#3b82f6}
-.settings-form .hint{font-size:11px;color:#8aa0c6;margin-top:2px}
-.settings-form .save-row{display:flex;gap:8px;align-items:center;margin-top:18px}
-.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a2740;border:1px solid #33415f;border-radius:10px;padding:10px 20px;font-size:13px;z-index:999;opacity:0;transition:opacity .25s}
+.settings-form{max-width:none}
+.settings-form label{display:block;font-size:12px;color:var(--label);margin:0 0 6px}
+.settings-form input,.settings-form select,.settings-form textarea{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--panel2);color:var(--text);outline:none}
+.settings-form input:focus,.settings-form select:focus,.settings-form textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
+.settings-form .hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55}
+.settings-form .save-row{display:flex;gap:8px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.settings-page{display:flex;flex-direction:column;gap:14px}
+.settings-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:2px}
+.settings-head h2{margin:0;font-size:16px;color:var(--text)}
+.settings-head .sub{margin:6px 0 0;font-size:12px;color:var(--muted);line-height:1.5;max-width:720px}
+.settings-grid{display:grid;grid-template-columns:1.1fr 0.9fr;gap:14px;align-items:start}
+@media (max-width:900px){.settings-grid{grid-template-columns:1fr}}
+.settings-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;margin:0;box-shadow:0 0 28px var(--glow)}
+.settings-card .card-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px}
+.settings-card .card-title h3{margin:0;font-size:14px;color:var(--text);font-weight:600}
+.settings-card .card-title .tag{font-size:11px;color:var(--badge-fg);background:var(--badge-bg);border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.field{margin-bottom:12px}
+.field:last-child{margin-bottom:0}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:640px){.field-row{grid-template-columns:1fr}}
+.inline-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.inline-controls select{width:auto;min-width:120px}
+.section-note{font-size:12px;color:var(--muted);line-height:1.55;margin:0 0 12px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line2);border-radius:10px}
+.sticky-actions{position:sticky;bottom:12px;z-index:5;background:linear-gradient(180deg,transparent,var(--bg) 40%);padding-top:10px;margin-top:4px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--hover);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;z-index:999;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
 .modal-overlay{position:fixed;inset:0;background:#0006;display:none;place-items:center;z-index:100}
 .modal-overlay.open{display:grid}
-.modal{background:#121a2b;border:1px solid #33415f;border-radius:14px;padding:24px;width:min(640px,94vw);max-height:80vh;overflow-y:auto}
-.modal h2{font-size:16px;margin:0 0 4px}
-.modal .desc{font-size:12px;color:#8aa0c6;margin-bottom:16px}
-.modal label{display:block;font-size:12px;color:#9fb3d9;margin-bottom:4px}
-.modal input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #33415f;background:#0b1220;color:#e8eefc;outline:none;margin-bottom:8px}
-.modal input:focus{border-color:#3b82f6}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px;width:min(640px,94vw);max-height:80vh;overflow-y:auto;box-shadow:0 0 40px var(--glow)}
+.modal h2{font-size:16px;margin:0 0 4px;color:var(--text)}
+.modal .desc{font-size:12px;color:var(--muted);margin-bottom:16px}
+.modal label{display:block;font-size:12px;color:var(--label);margin-bottom:4px}
+.modal input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--panel2);color:var(--text);outline:none;margin-bottom:8px}
+.modal input:focus{border-color:var(--accent)}
 .modal .btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 .modal .btn-row button{flex:1;min-width:80px;padding:10px}
-.cmd-box{background:#0b1220;border:1px solid #33415f;border-radius:8px;padding:12px;margin:12px 0;font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:#c7d2fe;max-height:240px;overflow-y:auto;user-select:all}
-.cmd-ok{color:#34d399;font-size:13px;margin:8px 0 4px;display:flex;gap:8px;align-items:center}
-.token-preview{color:#8aa0c6;font-size:11px}
-.tg-summary-result{background:#0b1220;border:1px solid #243049;border-radius:8px;padding:12px;margin-top:8px;font-size:12px;white-space:pre-wrap;line-height:1.5}
-.chart-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.seg{display:inline-flex;border:1px solid #33415f;border-radius:8px;overflow:hidden}
-.seg button{border:0;border-radius:0;background:#0b1220;padding:7px 14px;font-size:12px}
-.seg button.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
-.chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#9fb3d9;cursor:pointer;user-select:none}
-.chk input{accent-color:#3b82f6}
-.chart-title-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
-.chart-title-row h2{margin:0}
+.cmd-box{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin:12px 0;font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:240px;overflow-y:auto;user-select:all}
+.cmd-ok{color:var(--ok);font-size:13px;margin:8px 0 4px;display:flex;gap:8px;align-items:center}
+.token-preview{color:var(--muted);font-size:11px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.toolbar .spacer{flex:1}
+.chart-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.seg button{border:0;border-radius:0;background:var(--panel2);color:var(--muted);padding:6px 12px}
+.seg button.active{background:var(--badge-bg);color:var(--text);font-weight:600}
+.chk{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--label);user-select:none}
+.chk input{accent-color:var(--accent)}
+.tg-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--panel2);color:var(--label);cursor:pointer;user-select:none}
+.tg-pill .dot{width:8px;height:8px;border-radius:50%}
+.tg-pill.s-ok .dot{background:#22c55e}
+.tg-pill.s-ok{border-color:#166534;color:#86efac}
+.tg-pill.s-invalid .dot{background:#ef4444}
+.tg-pill.s-invalid{border-color:#7f1d1d;color:#fca5a5}
+.tg-pill.s-not_configured .dot{background:#64748b}
+.tg-pill.s-ok{color:#34d399;border-color:#14532d;background:color-mix(in srgb, var(--ok) 12%, var(--panel2))}
+.tg-pill.s-ready{color:var(--badge-fg);border-color:var(--badge-bg);background:var(--badge-bg)}
+.tg-pill.s-ready .dot{background:var(--badge-fg)}
+.tg-pill.s-incomplete{color:#fbbf24;border-color:#78350f;background:color-mix(in srgb, var(--warn) 14%, var(--panel2))}
+.tg-pill.s-incomplete .dot{background:#fbbf24}
+.tg-pill.s-invalid{color:#f87171;border-color:#7f1d1d;background:color-mix(in srgb, var(--danger) 14%, var(--panel2))}
+.tg-pill.s-not_configured{color:var(--muted);border-color:var(--border);background:var(--panel2)}
 .result-sum{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 14px}
-.result-sum .pill{padding:6px 12px;border-radius:999px;font-size:12px;border:1px solid #33415f;background:#0b1220}
+.result-sum .pill{padding:6px 12px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--panel2);color:var(--text)}
 .result-sum .pill.ok{color:#34d399;border-color:#14532d}
 .result-sum .pill.fail{color:#f87171;border-color:#7f1d1d}
 .result-sum .pill.skip{color:#fbbf24;border-color:#78350f}
-.result-sum .pill.wait{color:#93c5fd;border-color:#1e3a5f}
+.result-sum .pill.wait{color:var(--badge-fg);border-color:var(--badge-bg)}
 .result-table{width:100%;border-collapse:collapse;font-size:12px}
-.result-table th,.result-table td{padding:8px 10px;border-bottom:1px solid #1e2a42;text-align:left;vertical-align:top}
-.result-table th{color:#8aa0c6;font-weight:500}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid #33415f}
-.badge.ok{background:#052e1a;color:#34d399;border-color:#14532d}
-.badge.fail{background:#2a0f0f;color:#f87171;border-color:#7f1d1d}
-.badge.skip{background:#2a2008;color:#fbbf24;border-color:#78350f}
-.badge.wait{background:#0b1a2e;color:#93c5fd;border-color:#1e3a5f}
-.badge.reported{background:#0c2a1a;color:#6ee7b7;border-color:#065f46}
-.result-note{font-size:12px;color:#8aa0c6;margin:10px 0 0;line-height:1.5}
-.tg-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:12px;border:1px solid #33415f;background:#0b1220;cursor:pointer;user-select:none;white-space:nowrap}
-.tg-pill .dot{width:8px;height:8px;border-radius:50%}
-.tg-pill.s-ok{color:#34d399;border-color:#14532d;background:#052e1a}
-.tg-pill.s-ok .dot{background:#34d399}
-.tg-pill.s-ready{color:#93c5fd;border-color:#1e3a5f;background:#0b1a2e}
-.tg-pill.s-ready .dot{background:#93c5fd}
-.tg-pill.s-incomplete{color:#fbbf24;border-color:#78350f;background:#2a2008}
-.tg-pill.s-incomplete .dot{background:#fbbf24}
-.tg-pill.s-invalid{color:#f87171;border-color:#7f1d1d;background:#2a0f0f}
-.tg-pill.s-invalid .dot{background:#f87171}
-.tg-pill.s-not_configured{color:#8aa0c6;border-color:#33415f;background:#0b1220}
-.tg-pill.s-not_configured .dot{background:#8aa0c6}
-.tg-tip{font-size:11px;color:#8aa0c6;margin-left:4px}
-.batch-bar{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:#0e1628;border:1px solid #243049;border-radius:8px;font-size:12px}
+.result-table th,.result-table td{padding:8px 10px;border-bottom:1px solid var(--line2);text-align:left;vertical-align:top}
+.result-table th{color:var(--muted);font-weight:500}
+.badge.ok{background:#052e1a;color:#34d399;border:1px solid #14532d}
+.badge.fail{background:#2a0f0f;color:#f87171;border:1px solid #7f1d1d}
+.badge.skip{background:#2a2008;color:#fbbf24;border:1px solid #78350f}
+.badge.wait{background:var(--badge-bg);color:var(--badge-fg);border:1px solid var(--border)}
+.badge.reported{background:#0c2a1a;color:#6ee7b7;border:1px solid #065f46}
+.result-note{font-size:12px;color:var(--muted);margin:10px 0 0;line-height:1.5}
+.chart-title-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.chart-title-row h2{margin:0}
+
+.batch-bar{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius-sm);font-size:12px}
 .batch-bar.show{display:flex}
 .batch-bar button{padding:5px 10px;font-size:12px}
-textarea{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #33415f;background:#0b1220;color:#e8eefc;outline:none;font-family:monospace;font-size:12px;resize:vertical}
-textarea:focus{border-color:#3b82f6}
+textarea{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--panel2);color:var(--text);outline:none;font-family:monospace;font-size:12px;resize:vertical}
+textarea:focus{border-color:var(--accent)}
 .tpl-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.tpl-help{font-size:11px;color:#8aa0c6;line-height:1.6;background:#0b1220;border:1px solid #1e2a42;border-radius:8px;padding:10px;margin-top:8px}
-.tpl-help code{background:#1a2740;padding:1px 4px;border-radius:3px}
-.tpl-preview{background:#0b1220;border:1px solid #243049;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.6;max-height:300px;overflow:auto;color:#c7d2fe}
+@media (max-width:900px){.tpl-col{grid-template-columns:1fr}}
+.tpl-help{font-size:11px;color:var(--muted);line-height:1.6;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--radius-sm);padding:10px;margin-top:8px}
+.tpl-help code{background:var(--hover);padding:1px 4px;border-radius:3px}
+.tpl-preview{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px;font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.6;max-height:300px;overflow:auto;color:var(--text)}
 .tpl-active-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .tpl-active-row select{flex:0 0 auto}
-
-.row-check{width:18px;height:18px;cursor:pointer;accent-color:#3b82f6}
-.clock{font-variant-numeric:tabular-nums;font-size:12px;color:#9fb3d9;padding:6px 10px;border:1px solid #243049;border-radius:8px;background:#0b1220;white-space:nowrap;user-select:none}
-.clock b{color:#e8eefc;font-weight:600;margin-left:4px}
-
-
-
+.row-check{width:18px;height:18px;cursor:pointer;accent-color:var(--accent)}
+.clock{font-variant-numeric:tabular-nums;font-size:12px;color:var(--label);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);white-space:nowrap;user-select:none}
+.clock b{color:var(--text);font-weight:600;margin-left:4px}
+.theme-switch{display:inline-flex;align-items:center;gap:6px}
+.theme-switch select{min-width:128px;padding:6px 8px}
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.theme-opt{position:relative;border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;background:var(--panel2);transition:border-color .15s,box-shadow .15s,transform .15s}
+.theme-opt:hover{border-color:var(--accent);transform:translateY(-1px)}
+.theme-opt.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 20px var(--glow)}
+.theme-opt .swatch{height:36px;border-radius:8px;margin-bottom:8px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(135deg,var(--sw1),var(--sw2) 55%,var(--sw3))}
+.theme-opt .name{font-size:12px;font-weight:600;color:var(--text)}
+.theme-opt .desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
+.theme-opt[data-id="default"]{--sw1:#0b1220;--sw2:#3b82f6;--sw3:#34d399}
+.theme-opt[data-id="cyber"]{--sw1:#070b14;--sw2:#22d3ee;--sw3:#e879f9}
+.theme-opt[data-id="matrix"]{--sw1:#050a07;--sw2:#22c55e;--sw3:#a3e635}
+.theme-opt[data-id="aurora"]{--sw1:#0c0a16;--sw2:#a78bfa;--sw3:#38bdf8}
+.theme-opt[data-id="ice"]{--sw1:#071018;--sw2:#38bdf8;--sw3:#2dd4bf}
+.theme-opt[data-id="ember"]{--sw1:#100a07;--sw2:#f59e0b;--sw3:#fb7185}
 </style>
 
 <header>
@@ -1994,6 +2093,10 @@ textarea:focus{border-color:#3b82f6}
     </div>
   </div>
   <div class="actions">
+    <label class="theme-switch" title="切换界面主题">
+      <span class="muted" style="font-size:12px">主题</span>
+      <select id="themeSelect" onchange="setTheme(this.value)"></select>
+    </label>
     <span class="clock" id="dashClock" title="上海时间（浏览器本地计算，不请求服务器）">上海 <b>--</b></span>
     <button class="warn" onclick="sendTgSummary()" id="btnTgSum" title="向 Telegram 发送所有机器汇总">📊 TG 汇总</button>
     <form method="post" action="/logout" style="margin:0"><button type="submit">退出</button></form>
@@ -2063,73 +2166,138 @@ textarea:focus{border-color:#3b82f6}
 
   <!-- 设置页 -->
   <div id="pageSettings" class="page">
-    <div class="panel settings-form">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <h2 style="margin:0">全局配置</h2>
+    <div class="settings-page settings-form">
+      <div class="settings-head">
+        <div>
+          <h2>设置</h2>
+          <p class="sub">Telegram 凭证、定时汇总、VPS 默认上报周期与汇报模板。空字段自动回退环境变量 / 默认值。</p>
+        </div>
         <button type="button" onclick="switchTab('dash')">← 返回看板</button>
       </div>
-      <p class="muted" style="font-size:12px;margin-top:10px">空字段自动用默认值；TG 凭证页面留空则读 Worker 环境变量（TG_BOT_TOKEN / TG_ID）。<br>保存后可在看板「添加 VPS」生成命令；「📊 TG 汇总」发聚合日报。</p>
-      <label for="s_t_token">Telegram Bot Token（汇总用）</label>
-      <input id="s_t_token" type="password" placeholder="留空则用环境变量 TG_BOT_TOKEN">
-      <div class="hint" id="hint_t_token">页面未填时使用环境变量 TG_BOT_TOKEN</div>
 
-      <label for="s_t_id">Telegram Chat ID</label>
-      <input id="s_t_id" type="text" placeholder="留空则用环境变量 TG_ID">
-      <div class="hint" id="hint_t_id">页面未填时使用环境变量 TG_ID</div>
-
-      <label for="s_t_time">TG 汇报时间（HH:MM:SS，定时自动发送）</label>
-      <input id="s_t_time" type="text" placeholder="20:00:00">
-      <div class="hint">Worker 每小时整点检查，按小时匹配（如 20:00:00 → 上海时间 20 点发）；留空默认 20:00:00</div>
-
-      <label for="s_cf_time">CF 上报 cron（VPS 端默认）</label>
-      <input id="s_cf_time" type="text" placeholder="0 * * * *">
-      <div class="hint">写入安装命令的 VPS 上报周期。越密图表越细，但 CF/D1 调用越多：每小时=24次/台/天；每 6 小时=4次/台/天。看板统计（周/月/年）不依赖秒级上报。</div>
-
-      <div class="save-row">
-        <button class="primary" onclick="saveConfig()">保存设置</button>
-        <button type="button" onclick="switchTab('dash')">关闭</button>
-        <span id="saveStatus" class="muted"></span>
-      </div>
-    </div>
-
-    <div class="panel settings-form">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <h2 style="margin:0">TG 汇报模板</h2>
-        <button type="button" class="green" onclick="sendTgSummary()" id="btnTgNow" title="立即发送一次 TG 汇总">立即汇报</button>
-      </div>
-      <p class="muted" style="font-size:12px;margin-top:8px">选择/编辑汇报模板，支持内置与自定义。改完点「保存模板」。</p>
-      <div class="tpl-active-row">
-        <label style="margin:0">当前模板：</label>
-        <select id="tplActive" onchange="onTplActiveChange()"></select>
-        <button type="button" onclick="tplNew()">新建模板</button>
-        <button type="button" onclick="tplDelete()" class="danger">删除</button>
-        <button type="button" onclick="tplReset()">恢复内置</button>
-      </div>
-      <label for="tplName">模板名称</label>
-      <input id="tplName" type="text" placeholder="如：我的日报">
-      <div class="tpl-col">
-        <div>
-          <label for="tplBody">正文（{machine_lines} 处循环各机）</label>
-          <textarea id="tplBody" rows="9" placeholder="📊 流量汇总..."></textarea>
+      <div class="settings-grid">
+        <div class="settings-card">
+          <div class="card-title">
+            <h3>Telegram 连接</h3>
+            <span class="tag">汇总发送</span>
+          </div>
+          <p class="section-note">用于看板「TG 汇总 / 立即汇报 / 离线告警 / 登录通知」。页面留空则读取 Worker 加密变量 <code>TG_TOKEN</code> / <code>TG_ID</code>。</p>
+          <div class="field">
+            <label for="s_t_token">Bot Token</label>
+            <input id="s_t_token" type="password" placeholder="留空则用环境变量 TG_TOKEN / TG_BOT_TOKEN" autocomplete="off">
+            <div class="hint" id="hint_t_token">页面未填时使用环境变量</div>
+          </div>
+          <div class="field">
+            <label for="s_t_id">Chat ID</label>
+            <input id="s_t_id" type="text" placeholder="留空则用环境变量 TG_ID" autocomplete="off">
+            <div class="hint" id="hint_t_id">页面未填时使用环境变量 TG_ID</div>
+          </div>
         </div>
-        <div>
-          <label for="tplLine">每机行模板</label>
-          <textarea id="tplLine" rows="9" placeholder="{status} {m_id} 入{today_rx}/出{today_tx}"></textarea>
+
+        <div class="settings-card">
+          <div class="card-title">
+            <h3>定时 TG 汇总</h3>
+            <span class="tag">上海时间</span>
+          </div>
+          <p class="section-note">Worker 每小时整点检查一次。到点自动发送当前选中模板，同一天只发一次。也可在模板区点「立即汇报」。</p>
+          <div class="field">
+            <label for="s_t_hour">每天发送时刻</label>
+            <div class="inline-controls">
+              <select id="s_t_hour"></select>
+              <span class="muted" style="font-size:12px">整点 · Asia/Shanghai</span>
+            </div>
+            <input id="s_t_time" type="hidden" value="20:00:00">
+            <div class="hint" id="hint_t_time">当前：上海时间 20:00 发送</div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="card-title">
+            <h3>VPS 上报默认</h3>
+            <span class="tag">安装命令</span>
+          </div>
+          <p class="section-note">写入「添加 / 更新 VPS」安装命令的默认 cron。只影响新生成命令；已装机器需更新注册后才会变。</p>
+          <div class="field">
+            <label for="s_cf_time">CF 上报 cron</label>
+            <input id="s_cf_time" type="text" placeholder="0 * * * *" autocomplete="off" spellcheck="false">
+            <div class="hint">默认 <code>0 * * * *</code>（每小时）。更密 → 日内图更细，但 CF/D1 调用更多；周/月/年统计通常每小时或更疏即可。</div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="card-title">
+            <h3>界面主题</h3>
+            <span class="tag">本地记忆</span>
+          </div>
+          <p class="section-note">当前为默认主题，另有 5 套科技感主题。选择后立即生效，保存在本机浏览器，不消耗 CF 调用。</p>
+          <div class="theme-grid" id="themeGrid"></div>
+        </div>
+
+        <div class="settings-card">
+          <div class="card-title">
+            <h3>保存</h3>
+            <span class="tag">全局配置</span>
+          </div>
+          <p class="section-note">保存 Token、Chat ID、定时小时与 VPS 默认 cron。模板内容请在右侧「汇报模板」里单独保存。</p>
+          <div class="save-row" style="margin-top:0">
+            <button class="primary" onclick="saveConfig()">保存设置</button>
+            <button type="button" onclick="switchTab('dash')">返回看板</button>
+            <span id="saveStatus" class="muted"></span>
+          </div>
         </div>
       </div>
-      <div class="tpl-help">
-        占位符：<code>{"{time}","{host_count}","{online_count}","{today_rx}","{today_tx}","{today_total}","{month_rx}","{month_tx}","{month_total}"}</code> 用于正文；
-        每机行还可用 <code>{"{status}","{m_id}","{hostname}","{iface}"}</code> 及该机的 today/month。<code>{"{machine_lines}"}</code> 放正文里代表各机列表。
+
+      <div class="settings-card">
+        <div class="card-title">
+          <h3>TG 汇报模板</h3>
+          <div class="inline-controls">
+            <button type="button" class="green" onclick="sendTgSummary()" id="btnTgNow" title="立即发送一次 TG 汇总">立即汇报</button>
+          </div>
+        </div>
+        <p class="section-note">选择当前汇报模板，或编辑/新建。切换下拉会自动保存为当前 active；改完正文后请点「保存模板」。</p>
+
+        <div class="field-row" style="margin-bottom:12px">
+          <div class="field">
+            <label for="tplActive">当前模板</label>
+            <div class="inline-controls">
+              <select id="tplActive" onchange="onTplActiveChange()" style="min-width:180px;flex:1"></select>
+              <button type="button" onclick="tplNew()">新建</button>
+              <button type="button" onclick="tplDelete()" class="danger">删除</button>
+              <button type="button" onclick="tplReset()">恢复内置</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="tplName">模板名称</label>
+            <input id="tplName" type="text" placeholder="如：我的日报" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="tpl-col">
+          <div class="field">
+            <label for="tplBody">正文（可用 {machine_lines} 插入各机列表）</label>
+            <textarea id="tplBody" rows="11" placeholder="📊 流量汇总..."></textarea>
+          </div>
+          <div class="field">
+            <label for="tplLine">每机行模板</label>
+            <textarea id="tplLine" rows="11" placeholder="{status} {m_id} 入{today_rx}/出{today_tx}"></textarea>
+          </div>
+        </div>
+
+        <div class="tpl-help">
+          正文占位符：<code>{time}</code> <code>{host_count}</code> <code>{online_count}</code> <code>{today_rx}</code> <code>{today_tx}</code> <code>{today_total}</code> <code>{month_rx}</code> <code>{month_tx}</code> <code>{month_total}</code> <code>{machine_lines}</code><br>
+          每机行还可：<code>{status}</code> <code>{m_id}</code> <code>{hostname}</code> <code>{iface}</code> 及该机 today/month。
+        </div>
+
+        <div class="save-row sticky-actions">
+          <button class="primary" onclick="tplSave()">保存模板</button>
+          <button type="button" onclick="tplPreview()">预览</button>
+          <span id="tplStatus" class="muted"></span>
+        </div>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;color:#9fb3d9;font-size:12px">预览结果</summary>
+          <pre class="tpl-preview" id="tplPreview" style="margin-top:8px">（点「预览」用当前数据渲染）</pre>
+        </details>
       </div>
-      <div class="save-row" style="margin-top:14px">
-        <button class="primary" onclick="tplSave()">保存模板</button>
-        <button type="button" onclick="tplPreview()">预览</button>
-        <span id="tplStatus" class="muted"></span>
-      </div>
-      <details style="margin-top:8px">
-        <summary style="cursor:pointer;color:#9fb3d9;font-size:12px">预览结果（点开）</summary>
-        <pre class="tpl-preview" id="tplPreview" style="margin-top:8px">（点「预览」用当前数据渲染）</pre>
-      </details>
     </div>
   </div>
 
@@ -2675,11 +2843,12 @@ const valueLabelPlugin = {
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "11px system-ui,Segoe UI,sans-serif";
+    const tc = themeChartColors();
 
     if (isBar) {
       // 堆叠柱：在整柱顶部标「入+出」合计
       ctx.textBaseline = "bottom";
-      ctx.fillStyle = "#c7d2fe";
+      ctx.fillStyle = tc.label;
       for (let i = 0; i < n; i++) {
         let sum = 0;
         let topMeta = null;
@@ -2706,8 +2875,8 @@ const valueLabelPlugin = {
         const ds = data.datasets[di];
         const meta = chart.getDatasetMeta(di);
         if (!meta || meta.hidden || ds.hidden) continue;
-        const color = ds.borderColor || "#c7d2fe";
-        ctx.fillStyle = typeof color === "string" ? color : "#c7d2fe";
+        const color = ds.borderColor || tc.label;
+        ctx.fillStyle = typeof color === "string" ? color : tc.label;
         ctx.textBaseline = "bottom";
         const lift = 6 + visibleIdx * 12;
         for (let i = 0; i < n; i++) {
@@ -2743,12 +2912,13 @@ function buildLineChart(canvas, points, opts) {
   const rx = (points || []).map(p => (Number(p.rx) || 0) / 1e9);
   const tx = (points || []).map(p => (Number(p.tx) || 0) / 1e9);
   const datasets = [];
+  const tc = themeChartColors();
   if (showRx) {
     datasets.push({
       label: "入站 GB/时",
       data: rx,
-      borderColor: "#60a5fa",
-      backgroundColor: "rgba(96,165,250,0.15)",
+      borderColor: tc.rx,
+      backgroundColor: tc.rxFill,
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 4,
@@ -2760,8 +2930,8 @@ function buildLineChart(canvas, points, opts) {
     datasets.push({
       label: "出站 GB/时",
       data: tx,
-      borderColor: "#34d399",
-      backgroundColor: "rgba(52,211,153,0.12)",
+      borderColor: tc.tx,
+      backgroundColor: tc.txFill,
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 4,
@@ -2789,19 +2959,19 @@ function buildLineChart(canvas, points, opts) {
       layout: { padding: { top: 18, right: 8 } },
       scales: {
         x: {
-          ticks: { maxTicksLimit: 12, color: "#8aa0c6", maxRotation: 0, autoSkip: true },
-          grid: { color: "#1e2a42" },
+          ticks: { maxTicksLimit: 12, color: tc.muted, maxRotation: 0, autoSkip: true },
+          grid: { color: tc.grid },
         },
         y: {
           beginAtZero: true,
-          ticks: { color: "#8aa0c6" },
-          grid: { color: "#1e2a42" },
-          title: { display: true, text: "GB / 小时", color: "#8aa0c6" },
+          ticks: { color: tc.muted },
+          grid: { color: tc.grid },
+          title: { display: true, text: "GB / 小时", color: tc.muted },
         },
       },
       plugins: {
-        legend: { labels: { color: "#c7d2fe" } },
-        title: { display: !!title, text: title, color: "#e8eefc" },
+        legend: { labels: { color: tc.label } },
+        title: { display: !!title, text: title, color: tc.text },
         tooltip: {
           callbacks: {
             title: (items) => {
@@ -2828,12 +2998,13 @@ function buildStackedChart(canvas, points, opts) {
   const rx = (points || []).map(p => (Number(p.rx) || 0) / 1e9);
   const tx = (points || []).map(p => (Number(p.tx) || 0) / 1e9);
   const datasets = [];
+  const tc = themeChartColors();
   if (showRx) {
     datasets.push({
       label: "入站 GB",
       data: rx,
-      backgroundColor: "rgba(96,165,250,0.85)",
-      borderColor: "#60a5fa",
+      backgroundColor: tc.rxSoft,
+      borderColor: tc.rx,
       borderWidth: 1,
       borderRadius: 3,
       stack: "t",
@@ -2843,8 +3014,8 @@ function buildStackedChart(canvas, points, opts) {
     datasets.push({
       label: "出站 GB",
       data: tx,
-      backgroundColor: "rgba(52,211,153,0.85)",
-      borderColor: "#34d399",
+      backgroundColor: tc.txSoft,
+      borderColor: tc.tx,
       borderWidth: 1,
       borderRadius: 3,
       stack: "t",
@@ -2874,7 +3045,7 @@ function buildStackedChart(canvas, points, opts) {
           ticks: {
             // 月报最长 31 天，刻度上限对齐
             maxTicksLimit: 31,
-            color: "#8aa0c6",
+            color: tc.muted,
             maxRotation: 45,
             minRotation: 0,
             autoSkip: true,
@@ -2885,14 +3056,14 @@ function buildStackedChart(canvas, points, opts) {
         y: {
           stacked: true,
           beginAtZero: true,
-          ticks: { color: "#8aa0c6" },
-          grid: { color: "#1e2a42" },
-          title: { display: true, text: "GB", color: "#8aa0c6" },
+          ticks: { color: tc.muted },
+          grid: { color: tc.grid },
+          title: { display: true, text: "GB", color: tc.muted },
         },
       },
       plugins: {
-        legend: { labels: { color: "#c7d2fe" } },
-        title: { display: !!title, text: title, color: "#e8eefc" },
+        legend: { labels: { color: tc.label } },
+        title: { display: !!title, text: title, color: tc.text },
         tooltip: {
           callbacks: {
             footer: (items) => {
@@ -3134,14 +3305,124 @@ async function sendTgSummary() {
   }
 }
 
+
+// ─── 主题 ───
+const THEMES = [
+  { id:"default", name:"默认", desc:"经典深蓝控制台" },
+  { id:"cyber", name:"赛博霓虹", desc:"青 + 品红霓虹" },
+  { id:"matrix", name:"矩阵终端", desc:"墨绿代码流" },
+  { id:"aurora", name:"极光紫", desc:"紫雾与冷蓝" },
+  { id:"ice", name:"极地冰晶", desc:"冷蓝冰面" },
+  { id:"ember", name:"熔核琥珀", desc:"暗底橙金" },
+];
+function cssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch { return fallback; }
+}
+function themeChartColors() {
+  return {
+    rx: cssVar("--rx", "#60a5fa"),
+    tx: cssVar("--tx", "#34d399"),
+    rxSoft: cssVar("--rx-soft", "rgba(96,165,250,0.85)"),
+    txSoft: cssVar("--tx-soft", "rgba(52,211,153,0.85)"),
+    rxFill: cssVar("--rx-fill", "rgba(96,165,250,0.15)"),
+    txFill: cssVar("--tx-fill", "rgba(52,211,153,0.12)"),
+    grid: cssVar("--grid", "#1e2a42"),
+    muted: cssVar("--muted", "#8aa0c6"),
+    text: cssVar("--text", "#e8eefc"),
+    label: cssVar("--label", "#c7d2fe"),
+  };
+}
+function normalizeTheme(id) {
+  return THEMES.some(t => t.id === id) ? id : "default";
+}
+function setTheme(id, opts) {
+  const theme = normalizeTheme(id);
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("dash_theme", theme); } catch {}
+  const sel = document.getElementById("themeSelect");
+  if (sel) sel.value = theme;
+  document.querySelectorAll(".theme-opt").forEach(el => {
+    el.classList.toggle("active", el.dataset.id === theme);
+  });
+  if (!opts || opts.redraw !== false) {
+    try { if (mainPoints && mainPoints.length) renderMainChart(); } catch {}
+    try { if (histPoints && histPoints.length) renderHistChart(); } catch {}
+  }
+}
+function renderThemeUI() {
+  const sel = document.getElementById("themeSelect");
+  if (sel && !sel.options.length) {
+    for (const t of THEMES) {
+      const o = document.createElement("option");
+      o.value = t.id; o.textContent = t.name;
+      sel.appendChild(o);
+    }
+  }
+  const grid = document.getElementById("themeGrid");
+  if (grid) {
+    grid.replaceChildren();
+    for (const t of THEMES) {
+      const div = document.createElement("div");
+      div.className = "theme-opt";
+      div.dataset.id = t.id;
+      const sw = document.createElement("div"); sw.className = "swatch";
+      const nm = document.createElement("div"); nm.className = "name";
+      nm.textContent = t.name + (t.id === "default" ? "（默认）" : "");
+      const ds = document.createElement("div"); ds.className = "desc";
+      ds.textContent = t.desc;
+      div.appendChild(sw); div.appendChild(nm); div.appendChild(ds);
+      div.addEventListener("click", () => setTheme(t.id));
+      grid.appendChild(div);
+    }
+  }
+  let saved = "default";
+  try { saved = localStorage.getItem("dash_theme") || "default"; } catch {}
+  setTheme(saved, { redraw: false });
+}
+
 // ─── 设置 ───
+function ensureTgHourOptions() {
+  const sel = document.getElementById("s_t_hour");
+  if (!sel || sel.options.length) return;
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, "0");
+    const o = document.createElement("option");
+    o.value = hh;
+    o.textContent = hh + ":00";
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => {
+    const hh = sel.value || "20";
+    const hidden = document.getElementById("s_t_time");
+    if (hidden) hidden.value = hh + ":00:00";
+    const hint = document.getElementById("hint_t_time");
+    if (hint) hint.textContent = "当前：上海时间 " + hh + ":00 发送（整点，每天一次）";
+  });
+}
+function setTgHourFromTime(t) {
+  ensureTgHourOptions();
+  const m = /^(\d{1,2})/.exec(String(t || "20:00:00").trim());
+  let h = m ? Number(m[1]) : 20;
+  if (!Number.isFinite(h) || h < 0 || h > 23) h = 20;
+  const hh = String(h).padStart(2, "0");
+  const sel = document.getElementById("s_t_hour");
+  if (sel) sel.value = hh;
+  const hidden = document.getElementById("s_t_time");
+  if (hidden) hidden.value = hh + ":00:00";
+  const hint = document.getElementById("hint_t_time");
+  if (hint) hint.textContent = "当前：上海时间 " + hh + ":00 发送（整点，每天一次）";
+}
 async function loadConfig() {
+  ensureTgHourOptions();
   const data = await api("/api/config");
   if (!data) return;
   // 环境变量来源：输入框留空，避免保存时把 env 值写进 D1
   document.getElementById("s_t_token").value = data.t_token_from_env ? "" : (data.t_token || "");
   document.getElementById("s_t_id").value = data.t_id_from_env ? "" : (data.t_id || "");
-  document.getElementById("s_t_time").value = data.t_time || "20:00:00";
+  setTgHourFromTime(data.t_time || "20:00:00");
   document.getElementById("s_cf_time").value = data.cf_time || "0 * * * *";
   const ht = document.getElementById("hint_t_token");
   const hi = document.getElementById("hint_t_id");
@@ -3386,18 +3667,29 @@ async function saveConfig() {
   const orig = btn.textContent;
   btn.textContent = "保存中…";
   try {
+    // 以小时下拉为准，写回 HH:00:00
+    const hourSel = document.getElementById("s_t_hour");
+    let hh = hourSel ? String(hourSel.value || "20") : "20";
+    if (!/^\d{1,2}$/.test(hh) || Number(hh) < 0 || Number(hh) > 23) hh = "20";
+    hh = String(Number(hh)).padStart(2, "0");
+    const t_time = hh + ":00:00";
+    const hidden = document.getElementById("s_t_time");
+    if (hidden) hidden.value = t_time;
+    const hint = document.getElementById("hint_t_time");
+    if (hint) hint.textContent = "当前：上海时间 " + hh + ":00 发送（整点，每天一次）";
+
     await api("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         t_token: document.getElementById("s_t_token").value.trim(),
         t_id: document.getElementById("s_t_id").value.trim(),
-        t_time: document.getElementById("s_t_time").value.trim() || "20:00:00",
+        t_time,
         cf_time: document.getElementById("s_cf_time").value.trim() || "0 * * * *",
       }),
     });
-    document.getElementById("saveStatus").textContent = "✓ 已保存";
-    setTimeout(() => document.getElementById("saveStatus").textContent = "", 3000);
+    document.getElementById("saveStatus").textContent = "✓ 已保存（TG 将于上海 " + hh + ":00 发送）";
+    setTimeout(() => document.getElementById("saveStatus").textContent = "", 4000);
   } catch(e) {
     toast("保存失败：" + e.message);
   } finally {
@@ -3846,6 +4138,7 @@ document.getElementById("vpsMid").addEventListener("keydown", e => {
   if (e.key === "Enter") genCmd();
 });
 
+renderThemeUI();
 loadChartPrefs();
 // 恢复勾选
 try {

@@ -7,11 +7,8 @@
 # 必填：看板登录密码（自己设一个）
 PASSWORD = "change-me-please"
 
-# 可选：Telegram 机器人 Token（不填则不发 TG 汇总）
-# TG_BOT_TOKEN = "123456:ABC..."
+# 可选：TG 机器人 Token，VPS 用它给 TG 发消息（不填则不发 TG 汇总）
+# TG_TOKEN = "123456:ABC..."
 
 # 可选：Telegram 聊天/群 ID
 # TG_ID = "-1001234567890"
-
-# 可选：旧版全局上报密码；新版每台 VPS 用看板生成的独立 token，通常留空
-# TG_TOKEN = ""

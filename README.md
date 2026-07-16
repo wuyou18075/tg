@@ -135,7 +135,7 @@ Cloudflare Dashboard → 你的 Worker `cf-tg-web` → **设置** → **变量**
 | `PASSWORD` | 看板登录密码 | 访问 Web 看板必填 |
 | `TG_BOT_TOKEN` | Bot Token（可选） | 页面未填时用于 TG 汇总 |
 | `TG_ID` | Chat ID（可选） | 页面未填时用于 TG 汇总 |
-| `TG_TOKEN` | 任意长字符串（可选） | 全局上报密码：所有 VPS 共用，省去逐台 access_token。仅上报用；获取流量仍需 access_token |
+| `TG_TOKEN` | TG 机器人 Token（可选） | VPS 用它给 TG 发消息（Bot Token，如 `123456:ABC...`）。与上报鉴权无关 |
 
 加完后**无需再部署**——加密变量保存即对线上 Worker 立即生效。
 

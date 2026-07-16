@@ -10,9 +10,8 @@
   "cloudflare": {
     "description": {
       "PASSWORD": "必填。看板登录密码，自己设一个。",
-      "TG_BOT_TOKEN": "可选。Telegram Bot Token，用于 TG 汇总。",
       "TG_ID": "可选。Telegram Chat ID。",
-      "TG_TOKEN": "可选。旧版全局上报密码，通常留空。"
+      "TG_TOKEN": "可选。TG 机器人 Token，VPS 用它发 TG 消息（如 123456:ABC...）。"
     }
   }
 }

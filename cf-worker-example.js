@@ -1890,18 +1890,19 @@ html[data-theme="cyber"]{
   --rx-fill:rgba(34,211,238,.14); --tx-fill:rgba(232,121,249,.12);
   --grid:#16304f; --glow:rgba(34,211,238,.22); --header-glow:linear-gradient(90deg,rgba(34,211,238,.08),rgba(232,121,249,.08));
 }
-/* 炫酷黑：纯黑高对比，细银描边 + 冷白字 */
+/* 炫酷黑：炭黑分层 + 冷钢青点缀，避免一片死黑 */
 html[data-theme="noir"]{
   color-scheme:dark;
-  --bg:#050505; --bg2:#0a0a0a; --panel:#111111; --panel2:#0c0c0c;
-  --line:#222222; --line2:#1a1a1a; --border:#333333;
-  --text:#f5f5f5; --muted:#a3a3a3; --label:#d4d4d4;
-  --hover:#1a1a1a; --accent:#e5e5e5; --accent2:#ffffff;
-  --ok:#22c55e; --ok2:#16a34a; --warn:#f59e0b; --danger:#ef4444; --danger2:#dc2626;
-  --badge-bg:#1f1f1f; --badge-fg:#fafafa; --badge-off-bg:#3f1515; --badge-off-fg:#fca5a5;
-  --rx:#fafafa; --tx:#a3a3a3; --rx-soft:rgba(250,250,250,.92); --tx-soft:rgba(163,163,163,.88);
-  --rx-fill:rgba(250,250,250,.12); --tx-fill:rgba(163,163,163,.10);
-  --grid:#1f1f1f; --glow:rgba(255,255,255,.06); --header-glow:linear-gradient(90deg,rgba(255,255,255,.04),transparent);
+  --bg:#07080c; --bg2:#0c0e14; --panel:#12151d; --panel2:#0a0c12;
+  --line:#232833; --line2:#1a1e28; --border:#2e3545;
+  --text:#eef2f7; --muted:#9aa3b5; --label:#c4ccda;
+  --hover:#1a2030; --accent:#7dd3fc; --accent2:#38bdf8;
+  --ok:#34d399; --ok2:#10b981; --warn:#fbbf24; --danger:#f87171; --danger2:#ef4444;
+  --badge-bg:#172033; --badge-fg:#bae6fd; --badge-off-bg:#3a1518; --badge-off-fg:#fca5a5;
+  --rx:#7dd3fc; --tx:#a5b4fc; --rx-soft:rgba(125,211,252,.9); --tx-soft:rgba(165,180,252,.88);
+  --rx-fill:rgba(125,211,252,.14); --tx-fill:rgba(165,180,252,.12);
+  --grid:#1c2230; --glow:rgba(56,189,248,.12); --header-glow:linear-gradient(90deg,rgba(56,189,248,.10),rgba(165,180,252,.05),transparent 70%);
+  --body-bg:radial-gradient(900px 420px at 0% 0%, rgba(56,189,248,.10), transparent 55%), radial-gradient(700px 380px at 100% 0%, rgba(129,140,248,.08), transparent 50%), #07080c;
 }
 /* 透明玻璃：深空渐变底 + 毛玻璃面板 */
 html[data-theme="glass"]{
@@ -1918,31 +1919,33 @@ html[data-theme="glass"]{
   --blur:16px;
   --body-bg:radial-gradient(1200px 600px at 10% -10%, rgba(56,189,248,.28), transparent 55%), radial-gradient(900px 500px at 100% 0%, rgba(129,140,248,.26), transparent 50%), radial-gradient(800px 500px at 50% 100%, rgba(45,212,191,.12), transparent 45%), #0a1024;
 }
-/* 优雅白：浅色纸感，石墨字 + 靛蓝强调 */
+/* 优雅白：雾灰纸感，降低刺眼白，靛蓝点缀 */
 html[data-theme="paper"]{
   color-scheme:light;
-  --bg:#f6f7fb; --bg2:#ffffff; --panel:#ffffff; --panel2:#f3f5fa;
-  --line:#e6e9f2; --line2:#eef1f7; --border:#d7dce8;
-  --text:#1f2937; --muted:#6b7280; --label:#4b5563;
-  --hover:#eef2ff; --accent:#4f46e5; --accent2:#4338ca;
-  --ok:#059669; --ok2:#047857; --warn:#d97706; --danger:#dc2626; --danger2:#b91c1c;
-  --badge-bg:#e0e7ff; --badge-fg:#3730a3; --badge-off-bg:#fee2e2; --badge-off-fg:#991b1b;
-  --rx:#4f46e5; --tx:#0d9488; --rx-soft:rgba(79,70,229,.88); --tx-soft:rgba(13,148,136,.88);
-  --rx-fill:rgba(79,70,229,.12); --tx-fill:rgba(13,148,136,.12);
-  --grid:#e8ecf5; --glow:rgba(79,70,229,.10); --header-glow:linear-gradient(90deg,rgba(79,70,229,.06),transparent);
+  --bg:#e9edf5; --bg2:#f2f4f9; --panel:#f7f8fc; --panel2:#eef1f7;
+  --line:#d5dbe8; --line2:#e1e6f0; --border:#c7cfde;
+  --text:#1e293b; --muted:#64748b; --label:#475569;
+  --hover:#e4e9f6; --accent:#4f46e5; --accent2:#4338ca;
+  --ok:#0f766e; --ok2:#0d9488; --warn:#b45309; --danger:#b91c1c; --danger2:#991b1b;
+  --badge-bg:#e2e8f8; --badge-fg:#3730a3; --badge-off-bg:#f3d6d6; --badge-off-fg:#9f1239;
+  --rx:#4f46e5; --tx:#0f766e; --rx-soft:rgba(79,70,229,.88); --tx-soft:rgba(15,118,110,.88);
+  --rx-fill:rgba(79,70,229,.12); --tx-fill:rgba(15,118,110,.12);
+  --grid:#dbe1ee; --glow:rgba(79,70,229,.08); --header-glow:linear-gradient(90deg,rgba(79,70,229,.05),transparent);
+  --body-bg:linear-gradient(180deg,#e7ecf5 0%,#eef1f7 45%,#e9edf5 100%);
 }
-/* 草原绿：柔雾浅绿底 + 森林强调，避免高饱和刺眼 */
+/* 草原绿：中层更实的叶绿，避免中间发白发淡 */
 html[data-theme="prairie"]{
   color-scheme:light;
-  --bg:#f3f7f1; --bg2:#f8fbf6; --panel:#ffffff; --panel2:#eef5ea;
-  --line:#d7e5d4; --line2:#e5efe2; --border:#c5d8c0;
-  --text:#1c2b1f; --muted:#5f7463; --label:#3f5a46;
-  --hover:#e5f0e3; --accent:#3f7d4e; --accent2:#326641;
-  --ok:#4f8f5c; --ok2:#3f7d4e; --warn:#c28b2a; --danger:#c45c5c; --danger2:#a84848;
-  --badge-bg:#dcead9; --badge-fg:#2f5a3a; --badge-off-bg:#f3d6d6; --badge-off-fg:#8a3a3a;
-  --rx:#4f8f5c; --tx:#6b9e6f; --rx-soft:rgba(79,143,92,.9); --tx-soft:rgba(107,158,111,.88);
-  --rx-fill:rgba(79,143,92,.14); --tx-fill:rgba(107,158,111,.12);
-  --grid:#dfead9; --glow:rgba(63,125,78,.10); --header-glow:linear-gradient(90deg,rgba(63,125,78,.08),rgba(180,200,150,.05));
+  --bg:#e7f0e4; --bg2:#dfead9; --panel:#e4efdf; --panel2:#d5e5cf;
+  --line:#b9cfb3; --line2:#c9dcc3; --border:#a8c3a1;
+  --text:#17301c; --muted:#4d6653; --label:#2f4a36;
+  --hover:#cfe0c8; --accent:#2f6b3c; --accent2:#255731;
+  --ok:#3f7d4e; --ok2:#326641; --warn:#b07d22; --danger:#b45454; --danger2:#9a3f3f;
+  --badge-bg:#c5dbc0; --badge-fg:#1f4a2b; --badge-off-bg:#efd0d0; --badge-off-fg:#8a3a3a;
+  --rx:#2f6b3c; --tx:#5a8f5f; --rx-soft:rgba(47,107,60,.92); --tx-soft:rgba(90,143,95,.9);
+  --rx-fill:rgba(47,107,60,.16); --tx-fill:rgba(90,143,95,.14);
+  --grid:#c5d8bf; --glow:rgba(47,107,60,.12); --header-glow:linear-gradient(90deg,rgba(47,107,60,.10),rgba(140,170,120,.06));
+  --body-bg:linear-gradient(180deg,#e3ede0 0%,#e7f0e4 50%,#e1ecdd 100%);
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:var(--body-bg,var(--bg));color:var(--text);min-height:100vh}
@@ -1975,9 +1978,48 @@ html[data-theme="glass"] .tpl-preview{
 }
 html[data-theme="glass"] .seg button.active,
 html[data-theme="glass"] button.primary{background:rgba(56,189,248,.85);border-color:transparent;color:#041018}
+/* 下拉弹出层在系统原生控件里常是白底：强制选项深色字，避免“白底白字” */
+html[data-theme="glass"] select,
+html[data-theme="glass"] select option,
+html[data-theme="glass"] .settings-form select option,
+html[data-theme="glass"] .theme-switch select option{
+  color:#0b1220;
+  background:#f8fafc;
+}
+html[data-theme="glass"] select{
+  color:#f4f7ff;
+  background:rgba(8,14,32,.82);
+  border-color:rgba(125,211,252,.35);
+}
+html[data-theme="glass"] select:focus{
+  background:rgba(8,14,32,.92);
+}
+/* 展开后 option 仍走系统浅色底，保持深字 */
+html[data-theme="glass"] select option:checked,
+html[data-theme="glass"] select option:hover{
+  color:#041018;
+  background:#bae6fd;
+}
+
 html[data-theme="noir"] button.primary,
-html[data-theme="noir"] .seg button.active{background:#f5f5f5;border-color:#f5f5f5;color:#0a0a0a}
-html[data-theme="noir"] button.primary:hover{background:#ffffff;border-color:#ffffff;color:#000}
+html[data-theme="noir"] .seg button.active{background:linear-gradient(180deg,#7dd3fc,#38bdf8);border-color:transparent;color:#041018;font-weight:700}
+html[data-theme="noir"] button.primary:hover{background:linear-gradient(180deg,#bae6fd,#38bdf8);border-color:transparent;color:#041018}
+html[data-theme="noir"] header{border-bottom-color:#232833;box-shadow:inset 0 -1px 0 rgba(125,211,252,.12)}
+html[data-theme="noir"] .card .val{letter-spacing:.3px}
+html[data-theme="paper"] body,
+html[data-theme="paper"]{/* soft paper */}
+html[data-theme="paper"] header{background:#f0f3f9;border-bottom-color:#d5dbe8}
+html[data-theme="paper"] .card,
+html[data-theme="paper"] .panel,
+html[data-theme="paper"] .settings-card{background:#f7f8fc;border-color:#d5dbe8}
+html[data-theme="paper"] select,
+html[data-theme="paper"] button,
+html[data-theme="paper"] .settings-form input,
+html[data-theme="paper"] .settings-form select,
+html[data-theme="paper"] .settings-form textarea,
+html[data-theme="paper"] textarea{background:#eef1f7;border-color:#c7cfde;color:#1e293b}
+html[data-theme="paper"] .seg button{background:#e8ecf5;color:#475569}
+html[data-theme="paper"] .seg button.active{background:#4f46e5;color:#fff}
 html[data-theme="paper"] button.warn,
 html[data-theme="prairie"] button.warn{color:#111}
 html[data-theme="paper"] .card,
@@ -1994,6 +2036,24 @@ html[data-theme="noir"] .settings-card{
   box-shadow:0 0 0 1px rgba(255,255,255,.03),0 12px 40px rgba(0,0,0,.45);
 }
 html[data-theme="prairie"] button.primary{color:#fff}
+html[data-theme="prairie"] header{background:#d9e7d3;border-bottom-color:#b9cfb3}
+html[data-theme="prairie"] .card,
+html[data-theme="prairie"] .panel,
+html[data-theme="prairie"] .settings-card{background:#e4efdf;border-color:#b9cfb3}
+html[data-theme="prairie"] select,
+html[data-theme="prairie"] button,
+html[data-theme="prairie"] .settings-form input,
+html[data-theme="prairie"] .settings-form select,
+html[data-theme="prairie"] .settings-form textarea,
+html[data-theme="prairie"] textarea,
+html[data-theme="prairie"] .section-note,
+html[data-theme="prairie"] .tpl-help,
+html[data-theme="prairie"] .tpl-preview,
+html[data-theme="prairie"] .clock{background:#d5e5cf;border-color:#a8c3a1;color:#17301c}
+html[data-theme="prairie"] .seg button{background:#d0e1c9;color:#2f4a36}
+html[data-theme="prairie"] .seg button.active{background:#2f6b3c;color:#fff}
+html[data-theme="prairie"] .batch-bar{background:#d9e7d3}
+
 html[data-theme="paper"] button.primary{color:#fff}
 
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line2);background:var(--bg2);background-image:var(--header-glow)}
@@ -2027,6 +2087,24 @@ tr{cursor:pointer}
 tr.active{background:var(--hover)}
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:var(--badge-bg);color:var(--badge-fg)}
 .badge.off{background:var(--badge-off-bg);color:var(--badge-off-fg)}
+/* VPS 在线状态：固定语义色，不跟主题「信息标签」混用 */
+.status-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 8px;border-radius:999px;font-size:12px;font-weight:600;letter-spacing:.2px;line-height:1.2;border:1px solid transparent;white-space:nowrap;user-select:none}
+.status-pill .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 0 2px rgba(0,0,0,.08)}
+.status-pill.on{color:#166534;background:rgba(34,197,94,.14);border-color:rgba(22,163,74,.35)}
+.status-pill.on .dot{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+.status-pill.off{color:#991b1b;background:rgba(239,68,68,.12);border-color:rgba(185,28,28,.28)}
+.status-pill.off .dot{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.12)}
+html[data-theme="noir"] .status-pill.on{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.28)}
+html[data-theme="noir"] .status-pill.off{color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.28)}
+html[data-theme="cyber"] .status-pill.on{color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(16,185,129,.35)}
+html[data-theme="cyber"] .status-pill.off{color:#fda4af;background:rgba(244,63,94,.12);border-color:rgba(244,63,94,.3)}
+html[data-theme="glass"] .status-pill.on{color:#bbf7d0;background:rgba(34,197,94,.16);border-color:rgba(134,239,172,.28)}
+html[data-theme="glass"] .status-pill.off{color:#fecdd3;background:rgba(251,113,133,.14);border-color:rgba(251,113,133,.28)}
+html[data-theme="paper"] .status-pill.on{color:#166534;background:#dcfce7;border-color:#86efac}
+html[data-theme="paper"] .status-pill.off{color:#991b1b;background:#fee2e2;border-color:#fca5a5}
+html[data-theme="prairie"] .status-pill.on{color:#1f4a2b;background:#cfe8c8;border-color:#8fbf88}
+html[data-theme="prairie"] .status-pill.off{color:#8a3a3a;background:#f0d4d4;border-color:#d9a0a0}
+td.status-cell{white-space:nowrap;min-width:88px}
 button.sm{padding:4px 8px;font-size:12px;border-radius:6px}
 button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
 button.danger:hover{background:var(--danger2);border-color:var(--danger2)}
@@ -2137,10 +2215,10 @@ textarea:focus{border-color:var(--accent)}
 .theme-opt .desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
 .theme-opt[data-id="default"]{--sw1:#0b1220;--sw2:#3b82f6;--sw3:#34d399}
 .theme-opt[data-id="cyber"]{--sw1:#070b14;--sw2:#22d3ee;--sw3:#e879f9}
-.theme-opt[data-id="noir"]{--sw1:#050505;--sw2:#f5f5f5;--sw3:#333333}
+.theme-opt[data-id="noir"]{--sw1:#07080c;--sw2:#7dd3fc;--sw3:#2e3545}
 .theme-opt[data-id="glass"]{--sw1:#0a1024;--sw2:#7dd3fc;--sw3:#a5b4fc}
-.theme-opt[data-id="paper"]{--sw1:#f6f7fb;--sw2:#4f46e5;--sw3:#0d9488}
-.theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#3f7d4e;--sw3:#6b9e6f}
+.theme-opt[data-id="paper"]{--sw1:#e9edf5;--sw2:#4f46e5;--sw3:#0f766e}
+.theme-opt[data-id="prairie"]{--sw1:#e4efdf;--sw2:#2f6b3c;--sw3:#5a8f5f}
 </style>
 
 <header>
@@ -2724,10 +2802,27 @@ function renderTable() {
     }
 
     const tdSt = document.createElement("td");
+    tdSt.className = "status-cell";
     const badge = document.createElement("span");
     const isOn = online(m.ts);
-    badge.className = isOn ? "badge" : "badge off";
-    badge.textContent = isOn ? "在线" : "离线";
+    badge.className = "status-pill " + (isOn ? "on" : "off");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const lab = document.createElement("span");
+    lab.textContent = isOn ? "在线" : "离线";
+    badge.appendChild(dot);
+    badge.appendChild(lab);
+    // 悬停显示距上次上报多久，避免只看“在线/离线”含糊
+    if (m.ts) {
+      const ago = Math.max(0, Math.floor(Date.now()/1000 - Number(m.ts)));
+      const agoTxt = ago < 60 ? (ago + " 秒前")
+        : ago < 3600 ? (Math.floor(ago/60) + " 分钟前")
+        : ago < 86400 ? (Math.floor(ago/3600) + " 小时前")
+        : (Math.floor(ago/86400) + " 天前");
+      badge.title = (isOn ? "在线" : "离线") + " · 最后上报 " + agoTxt + "（阈值 2 小时内算在线）";
+    } else {
+      badge.title = "尚无上报记录";
+    }
     tdSt.appendChild(badge);
     tr.appendChild(tdSt);
 
@@ -3370,10 +3465,10 @@ async function sendTgSummary() {
 const THEMES = [
   { id:"default", name:"默认", desc:"经典深蓝控制台" },
   { id:"cyber", name:"赛博霓虹", desc:"青 + 品红霓虹" },
-  { id:"noir", name:"炫酷黑", desc:"纯黑高对比银描边" },
+  { id:"noir", name:"炫酷黑", desc:"炭黑分层 + 冷钢青" },
   { id:"glass", name:"透明玻璃", desc:"深空底 + 毛玻璃" },
-  { id:"paper", name:"优雅白", desc:"浅色纸感靛蓝点缀" },
-  { id:"prairie", name:"草原绿", desc:"柔雾浅绿森林强调" },
+  { id:"paper", name:"优雅白", desc:"雾灰纸感，柔和不刺眼" },
+  { id:"prairie", name:"草原绿", desc:"实叶绿分层，中层不发白" },
 ];
 const THEME_ALIAS = { matrix:"prairie", aurora:"glass", ice:"paper", ember:"noir" };
 function cssVar(name, fallback) {

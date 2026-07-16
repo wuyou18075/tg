@@ -120,6 +120,25 @@ bash /usr/local/sbin/traffic-telegram-report --uninstall 2>/dev/null || bash sum
 - **每台 VPS 的 `access_token` 互不相同**，互不影响；泄露一台只需在看板「更新注册」轮换该机密钥。
 - **`TG_TOKEN` 与上报鉴权无关**：它只用于 Worker 发 TG 消息（链路 ③）。VPS 能不能上报/被推送只看 `access_token`。
 
+### access_token 轮换（两边自动同步，无需重装）
+
+两种轮换方式，都会在下次上报时自动完成切换：
+
+**A. VPS 端主动轮换**（VPS 上执行）：
+
+```bash
+/usr/local/sbin/traffic-telegram-report --rotate-token
+# 生成 refresh_access_token，存入 conf；下次上报成功后自动切换为新的 access_token
+```
+
+流程：VPS 生成 `refresh_access_token` → 下次上报用**旧 access_token** 认证通过、同时带上 refresh → Worker 把该机 access_token 换成 refresh → 响应带回新 token → VPS 写入本地、清空 refresh。
+
+**B. Web 端主动轮换**（看板「更新注册」勾选「轮换新密钥」）：
+
+Web 生成新 access_token 存为该机 `pending_token`（旧 token 仍可用一次）→ VPS 下次上报（旧 token）时 Worker 下发新 token → VPS 自动切换本地为新 token。
+
+> 两种方式都**不需要在 VPS 重新执行安装命令**。只有 VPS 长时间不上报（超过你预期的保留期）时，才用「更新注册」生成的完整命令重装。
+
 **部署后操作：** 打开 Worker 地址 → 用 `PASSWORD` 登录 → 「添加 VPS」生成每台机器的安装命令（含该机独立 `access_token`）→ 在 VPS 上执行即可开始上报。
 
 > 已部署用户日常更新代码用 git push（见方案二·B），不必重复一键部署。

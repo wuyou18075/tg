@@ -229,6 +229,9 @@ async function ensureSchema(env) {
   try {
     await env.DB.prepare(`ALTER TABLE machines ADD COLUMN online_sec INTEGER DEFAULT 0`).run();
   } catch {}
+  try {
+    await env.DB.prepare(`ALTER TABLE vps_tokens ADD COLUMN pending_token TEXT`).run();
+  } catch {}
 }
 
 /** 上报间隔 ≤ 此秒数视为连续在线，计入累积在线时长（与看板「在线」2h 一致） */
@@ -481,6 +484,13 @@ async function saveConfig(env, data) {
 
 // ─── VPS Token 管理 ───
 
+/** 生成随机 access_token（32 字节 hex） */
+function randomAccessToken() {
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function getOrCreateVpsToken(env, mid) {
   if (!env.DB) throw new Error(missingDbError(env));
   const existing = await env.DB.prepare(
@@ -488,16 +498,57 @@ async function getOrCreateVpsToken(env, mid) {
   ).bind(mid).first();
   if (existing) return String(existing.token || "").trim();
 
-  // 生成 32 字节 hex token
-  const buf = new Uint8Array(32);
-  crypto.getRandomValues(buf);
-  const token = Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
-
+  const token = randomAccessToken();
   const now = Math.floor(Date.now() / 1000);
   await env.DB.prepare(
     `INSERT INTO vps_tokens (machine_id, token, created_at) VALUES (?, ?, ?)`
   ).bind(mid, token, now).run();
   return token;
+}
+
+/**
+ * 验证上报 Bearer，并处理 token 轮换协商：
+ *  - VPS 主动：body.refresh_access_token 有值 → 切换为新 token
+ *  - Web 主动：pending_token 有值且 VPS 仍用旧 token → 下发 pending
+ *  - 重装：VPS 直接用 pending_token 上报 → 确认应用
+ * 返回 { ok, new_access_token? }
+ */
+async function verifyAndRotate(env, mid, bearer, refreshRaw) {
+  if (!bearer) return { ok: false };
+  const row = await env.DB.prepare(
+    `SELECT token, pending_token FROM vps_tokens WHERE machine_id = ?`
+  ).bind(mid).first();
+  if (!row) return { ok: false };
+
+  const cur = String(row.token || "").replace(/\r/g, "").trim();
+  const pend = String(row.pending_token || "").replace(/\r/g, "").trim();
+  const b = String(bearer).replace(/\r/g, "").trim();
+
+  let usingCurrent = !!(cur && b === cur);
+  let usingPending = !!(pend && b === pend);
+  if (!usingCurrent && !usingPending) return { ok: false };
+
+  const refresh = String(refreshRaw || "").replace(/\r/g, "").trim();
+  let newTok = null;
+  if (refresh && /^[A-Za-z0-9._~+/-]{8,256}$/.test(refresh)) {
+    newTok = refresh;
+  } else if (pend && usingCurrent) {
+    newTok = pend;
+  }
+
+  if (newTok) {
+    await env.DB.prepare(
+      `UPDATE vps_tokens SET token = ?, pending_token = NULL WHERE machine_id = ?`
+    ).bind(newTok, mid).run();
+    return { ok: true, new_access_token: newTok };
+  }
+  // 用 pending 上报（重装场景），确认应用
+  if (usingPending && pend && pend !== cur) {
+    await env.DB.prepare(
+      `UPDATE vps_tokens SET token = ?, pending_token = NULL WHERE machine_id = ?`
+    ).bind(pend, mid).run();
+  }
+  return { ok: true };
 }
 
 /** 写入/覆盖某机 access_token（上报成功时同步，保证获取流量一致） */
@@ -649,7 +700,13 @@ async function generateUpdateCommand(env, request, body) {
   let vpsToken;
   try {
     if (body && body.rotate_token) {
-      vpsToken = await rotateVpsToken(env, mid);
+      // 生成新 token 写入 pending_token；VPS 下次上报自动切换，或重装直接用新 token
+      vpsToken = randomAccessToken();
+      const nowR = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(
+        `INSERT INTO vps_tokens (machine_id, token, created_at, pending_token) VALUES (?, ?, ?, ?)
+         ON CONFLICT(machine_id) DO UPDATE SET pending_token = excluded.pending_token`,
+      ).bind(mid, vpsToken, nowR, vpsToken).run();
     } else {
       const provided = String((body && body.access_token) || "").trim();
       const existing = await getVpsTokenFull(env, mid);
@@ -1482,7 +1539,7 @@ td.ops button{margin-right:4px}
     <label for="upCbPort">回调端口（cb_port）</label>
     <input id="upCbPort" type="text" placeholder="19840" autocomplete="off">
     <label style="display:flex;align-items:center;gap:8px;margin:10px 0;cursor:pointer">
-      <input id="upRotate" type="checkbox" style="width:auto;margin:0"> 轮换新密钥（旧 token 立即失效）
+      <input id="upRotate" type="checkbox" style="width:auto;margin:0"> 轮换新密钥（VPS 下次上报自动同步，无需重装）
     </label>
     <div id="upCmdRegion" style="display:none">
       <div class="cmd-ok" id="upOk"></div>
@@ -2464,14 +2521,15 @@ export default {
         return json({ ok: false, error: "machine_id invalid" }, 400);
       }
 
-      // 鉴权：只认该机 access_token
+      // 鉴权 + token 轮换协商
       const bearer = extractBearer(req);
-      if (!bearer || !(await verifyVpsToken(env, mid, bearer))) {
+      const auth = await verifyAndRotate(env, mid, bearer, body && body.refresh_access_token);
+      if (!auth.ok) {
         return json({ ok: false, error: "unauthorized" }, 401);
       }
 
       await upsertReport(env, { ...body, machine_id: mid });
-      return json({ ok: true });
+      return json(auth.new_access_token ? { ok: true, new_access_token: auth.new_access_token } : { ok: true });
     }
 
     // /login /logout

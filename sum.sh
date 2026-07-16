@@ -269,6 +269,7 @@ TG_CHAT_ID=""
 INTERFACE=""
 CF_URL=""
 ACCESS_TOKEN=""
+REFRESH_ACCESS_TOKEN=""
 MACHINE_ID=""
 CALLBACK_URL=""
 CB_PORT="19840"
@@ -283,8 +284,9 @@ load_config() {
       TG_CHAT_ID)   TG_CHAT_ID="${val}"   ;;
       INTERFACE)    INTERFACE="${val}"     ;;
       CF_URL)       CF_URL="${val}"        ;;
-      ACCESS_TOKEN)     ACCESS_TOKEN="${val}"      ;;
-      MACHINE_ID)   MACHINE_ID="${val}"    ;;
+      ACCESS_TOKEN)         ACCESS_TOKEN="${val}"        ;;
+      REFRESH_ACCESS_TOKEN) REFRESH_ACCESS_TOKEN="${val}" ;;
+      MACHINE_ID)           MACHINE_ID="${val}"          ;;
       CALLBACK_URL) CALLBACK_URL="${val}"  ;;
       CB_PORT)      CB_PORT="${val}"       ;;
     esac
@@ -395,6 +397,7 @@ send_cf() {
     --arg host "$(hostname)" \
     --arg iface "${INTERFACE}" \
     --arg cb "${CALLBACK_URL}" \
+    --arg rat "${REFRESH_ACCESS_TOKEN:-}" \
     --argjson ts "$(date +%s)" \
     --argjson tr_rx "${TR_RX}" \
     --argjson tr_tx "${TR_TX}" \
@@ -408,7 +411,8 @@ send_cf() {
       callback_url: (if $cb == "" then null else $cb end),
       date: { year: ($y|tonumber), month: $m, day: $d },
       today: { rx: $tr_rx, tx: $tr_tx, total: ($tr_rx + $tr_tx) },
-      month: { rx: $mr_rx, tx: $mr_tx, total: ($mr_rx + $mr_tx) }
+      month: { rx: $mr_rx, tx: $mr_tx, total: ($mr_rx + $mr_tx) },
+      refresh_access_token: (if $rat == "" then null else $rat end)
     }')"
   local resp
   resp="$(curl --silent --show-error --fail-with-body \
@@ -421,7 +425,32 @@ send_cf() {
     "${CF_URL}")" || { log_error "CF 上报失败。"; return 1; }
   jq -e '.ok == true' >/dev/null 2>&1 <<<"${resp}" || {
     log_error "CF 返回失败：$(jq -r '.error // .message // "未知错误"' <<<"${resp}")"; return 1; }
+  # 服务端下发新 access_token → 写回 conf，清空 refresh
+  local new_tok
+  new_tok="$(jq -r '.new_access_token // empty' <<<"${resp}" 2>/dev/null || true)"
+  if [[ -n "${new_tok}" && "${new_tok}" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; then
+    if [[ -w "${CONFIG}" ]]; then
+      sed -i "s|^ACCESS_TOKEN=.*|ACCESS_TOKEN=${new_tok}|; /^REFRESH_ACCESS_TOKEN=/d" "${CONFIG}" 2>/dev/null || true
+    fi
+    ACCESS_TOKEN="${new_tok}"
+    REFRESH_ACCESS_TOKEN=""
+  fi
   return 0
+}
+
+# ─── 主动生成 refresh_access_token（VPS 端「更新 token」）───
+rotate_token() {
+  load_config || return 1
+  [[ -n "${ACCESS_TOKEN}" ]] || { log_error "未配置 ACCESS_TOKEN，无法轮换。"; return 1; }
+  local new
+  new="$(od -An -tx1 -N32 /dev/urandom 2>/dev/null | tr -d ' \n')" || { log_error "生成随机 token 失败"; return 1; }
+  [[ -n "${new}" ]] || { log_error "生成随机 token 失败"; return 1; }
+  if grep -q '^REFRESH_ACCESS_TOKEN=' "${CONFIG}" 2>/dev/null; then
+    sed -i "s|^REFRESH_ACCESS_TOKEN=.*|REFRESH_ACCESS_TOKEN=${new}|" "${CONFIG}"
+  else
+    printf 'REFRESH_ACCESS_TOKEN=%s\n' "${new}" >> "${CONFIG}"
+  fi
+  printf '已生成 refresh_access_token（下次上报成功后自动切换为新的 access_token）。\n'
 }
 
 run_tg() {
@@ -440,8 +469,9 @@ main() {
   umask 077; export LC_ALL=C
   load_config; require_cmds
   case "${1:-}" in
-    --tg|--test) run_tg "${1}" ;;
-    --cf)        run_cf ;;
+    --tg|--test)     run_tg "${1}" ;;
+    --cf)            run_cf ;;
+    --rotate-token)  rotate_token ;;
     "")
       if [[ -n "${TG_BOT_TOKEN}" && -n "${TG_CHAT_ID}" ]]; then run_tg; fi
       if [[ -n "${CF_URL}" && -n "${ACCESS_TOKEN}" && -n "${MACHINE_ID}" ]]; then run_cf; fi

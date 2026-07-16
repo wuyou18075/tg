@@ -618,6 +618,7 @@ SERVICE_EOF
 # ─── systemd 单元 ───
 write_service_unit() {
   local exec_flag="$1"
+  # systemd 要求「每行一个指令」；分号合并会导致 User= 被解析成非法用户名 → 217/USER
   cat >"${SERVICE_FILE}" <<SERVICE_EOF
 [Unit]
 Description=Send vnStat traffic report to Telegram
@@ -627,10 +628,16 @@ Wants=network-online.target vnstat.service
 [Service]
 Type=oneshot
 ExecStart=${REPORT_SCRIPT} ${exec_flag}
-User=root; Group=root; UMask=0077
-NoNewPrivileges=true; PrivateDevices=true; PrivateTmp=true
-ProtectKernelModules=true; ProtectKernelTunables=true
-ProtectSystem=strict; RestrictAddressFamilies=AF_INET AF_INET6
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target
@@ -647,10 +654,16 @@ Wants=network-online.target vnstat.service
 [Service]
 Type=oneshot
 ExecStart=${REPORT_SCRIPT} --cf
-User=root; Group=root; UMask=0077
-NoNewPrivileges=true; PrivateDevices=true; PrivateTmp=true
-ProtectKernelModules=true; ProtectKernelTunables=true
-ProtectSystem=strict; RestrictAddressFamilies=AF_INET AF_INET6
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target
@@ -664,7 +677,9 @@ write_tg_timer() {
 Description=Telegram traffic report daily at ${report_time}
 [Timer]
 OnCalendar=*-*-* ${report_time}
-Persistent=true; AccuracySec=1min; Unit=${APP_NAME}.service
+Persistent=true
+AccuracySec=1min
+Unit=${APP_NAME}.service
 [Install]
 WantedBy=timers.target
 TIMER_EOF
@@ -680,7 +695,9 @@ Description=Cloudflare traffic report (${cron_expr})
 [Timer]
 OnCalendar=${oncal}
 OnBootSec=30
-Persistent=true; AccuracySec=1min; Unit=${APP_NAME}-cf.service
+Persistent=true
+AccuracySec=1min
+Unit=${APP_NAME}-cf.service
 [Install]
 WantedBy=timers.target
 TIMER_EOF

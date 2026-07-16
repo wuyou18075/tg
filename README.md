@@ -190,6 +190,20 @@ cf_time='0 * * * *' \
 
 ---
 
+## 排查 systemctl 启动失败（217/USER）
+
+若 `systemctl start traffic-telegram-report-cf.service` 报 `status=217/USER`，且 journal 有 `Failed to parse NoNewPrivileges=true; PrivateDevices=...`：  
+是旧版 unit 把多条配置写在同一行。用最新 `sum.sh` **更新注册**重装即可；或手动：
+
+```bash
+# 直接跑上报（不经过有问题的 unit）
+/usr/local/sbin/traffic-telegram-report --cf
+
+# 修好 unit 后
+systemctl daemon-reload
+systemctl start traffic-telegram-report-cf.service
+```
+
 ## 排查「获取流量」失败
 
 结果弹窗「说明」列会写具体原因。常见：

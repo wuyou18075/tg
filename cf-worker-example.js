@@ -131,7 +131,17 @@ function bashSingleQuote(s) {
 function reportAuth(req, env) {
   const h = req.headers.get("authorization") || "";
   const m = /^Bearer\s+(.+)$/i.exec(h);
-  return !!(env.TG_TOKEN && m && m[1] === env.TG_TOKEN);
+  if (!env.TG_TOKEN || !m) return false;
+  const got = String(m[1] || "").replace(/\r/g, "").trim();
+  const exp = String(env.TG_TOKEN || "").replace(/\r/g, "").trim();
+  return !!(got && exp && got === exp);
+}
+
+/** 从请求取出 Bearer token（已 trim） */
+function extractBearer(req) {
+  const h = req.headers.get("authorization") || "";
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return m ? String(m[1] || "").replace(/\r/g, "").trim() : "";
 }
 
 // ─── 会话 ───
@@ -438,12 +448,30 @@ async function getOrCreateVpsToken(env, mid) {
   return token;
 }
 
+/** 写入/覆盖某机 token（上报成功时同步，保证获取流量与 CF_TOKEN 一致） */
+async function upsertVpsToken(env, mid, token) {
+  if (!env.DB || !mid || !token) return;
+  const tok = String(token).replace(/\r/g, "").trim();
+  if (!tok || tok.length < 8) return;
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO vps_tokens (machine_id, token, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(machine_id) DO UPDATE SET token = excluded.token`,
+  ).bind(mid, tok, now).run();
+}
+
 async function verifyVpsToken(env, mid, token) {
   const row = await env.DB.prepare(
     `SELECT token FROM vps_tokens WHERE machine_id = ?`
   ).bind(mid).first();
   if (!row) return false;
-  return row.token === token;
+  const a = String(row.token || "").replace(/\r/g, "").trim();
+  const b = String(token || "").replace(/\r/g, "").trim();
+  if (!a || !b || a.length !== b.length) return false;
+  // 简单等长比较（token 为 hex/ASCII，非密码学时序敏感场景）
+  let ok = 0;
+  for (let i = 0; i < a.length; i++) ok |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return ok === 0;
 }
 
 async function deleteVpsToken(env, mid) {
@@ -603,7 +631,17 @@ async function getMachineReg(env, request, mid) {
   const cfg = await getConfig(env);
   const url = new URL(request.url);
   let token = await getVpsTokenFull(env, mid);
-  if (!token) token = await getOrCreateVpsToken(env, mid);
+  if (token) token = String(token).replace(/\r/g, "").trim();
+  if (!token) {
+    // 无独立 token 时不急着生成新的：先展示全局 TG_TOKEN（若有），避免更新命令与现网 CF_TOKEN 脱节
+    const g = String(env.TG_TOKEN || "").replace(/\r/g, "").trim();
+    if (g) {
+      token = g;
+      try { await upsertVpsToken(env, mid, g); } catch { /* ignore */ }
+    } else {
+      token = await getOrCreateVpsToken(env, mid);
+    }
+  }
   return {
     ok: true,
     machine_id: mid,
@@ -921,10 +959,13 @@ async function forceReportPushAll(env) {
   const rows = results || [];
   const targets = [];
   const skipped = [];
+  const globalTok = String(env.TG_TOKEN || "").replace(/\r/g, "").trim();
   for (const r of rows) {
     const mid = r.machine_id;
     const cb = (r.callback_url || "").trim();
-    const token = (r.token || "").trim();
+    // 优先 per-machine token；无则回退全局 TG_TOKEN（与上报鉴权一致）
+    let token = String(r.token || "").replace(/\r/g, "").trim();
+    if (!token && globalTok) token = globalTok;
     if (!isValidCallbackUrl(cb)) {
       skipped.push({ machine_id: mid, reason: "no_callback_url" });
       continue;
@@ -2251,12 +2292,16 @@ export default {
         return json({ ok: false, error: "machine_id invalid" }, 400);
       }
 
-      // 优先用 TG_TOKEN（全局密码），其次校验每台 VPS 独立密码
-      if (!reportAuth(req, env)) {
-        const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-        if (!token || !(await verifyVpsToken(env, mid, token))) {
-          return json({ ok: false, error: "unauthorized" }, 401);
-        }
+      // 鉴权：全局 TG_TOKEN 或该机 vps_tokens；通过后把实际 Bearer 写回 vps_tokens
+      // （避免「上报用全局 token 成功、获取流量用旧 vps token 失败」）
+      const bearer = extractBearer(req);
+      const okGlobal = reportAuth(req, env);
+      const okVps = bearer ? await verifyVpsToken(env, mid, bearer) : false;
+      if (!okGlobal && !okVps) {
+        return json({ ok: false, error: "unauthorized" }, 401);
+      }
+      if (bearer) {
+        try { await upsertVpsToken(env, mid, bearer); } catch { /* ignore sync fail */ }
       }
 
       await upsertReport(env, { ...body, machine_id: mid });

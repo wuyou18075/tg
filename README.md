@@ -199,7 +199,7 @@ cf_time='0 * * * *' \
 | CF 1003 / 直连 IP | 确认已部署含 TCP sockets 的最新 Worker |
 | 建连失败 / 超时 | VPS 放行回调端口（默认 **19840**）；`systemctl status traffic-telegram-report-cb` |
 | 无 HTTP 响应 | 端口被其它进程占用，或回调服务未正常监听 |
-| 401 / token mismatch / unauthorized | 看板 `vps_tokens` 与 VPS `/etc/traffic-telegram-report.conf` 里 `CF_TOKEN` 不一致 → 看板 **更新注册** 复制命令整段重跑（不要手改 token） |
+| 401 / token mismatch / unauthorized | 看板推送 token 与 VPS `CF_TOKEN` 不一致。部署最新 Worker 后：等该机**再上报一次**会自动同步；或 **更新注册** 整段重跑。若 VPS 用的是全局 `TG_TOKEN`，推送也会自动回退使用它 |
 | no_callback_url | 机器未登记回调 → 用含 `cf_url` 的安装命令重装/更新 |
 
 在 VPS 本机自测回调：

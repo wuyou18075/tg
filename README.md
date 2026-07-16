@@ -59,10 +59,20 @@ journalctl -u traffic-telegram-report.service
 2. 编辑代码，粘贴本仓库 [`cf-worker-example.js`](cf-worker-example.js)
 3. 保存并部署
 
-**方式 C：GitHub Actions / Cloudflare Builds**
+**方式 C：GitHub Actions / Cloudflare Builds（二选一，用 `.deploy-mode` 切换）**
 
 仓库已配置 `wrangler.toml`（`name = "cf-tg-web"`）与 `.github/workflows/deploy.yml`。  
-**不要把 `database_id` 写进仓库**；D1 一律在 Dashboard 绑定（见第 3 步）。
+`database_id` 已写进 `wrangler.toml`（持久绑定 D1，见第 3 步）。
+
+在仓库根 `.deploy-mode` 文件里写一个词决定由谁部署：
+
+| `.deploy-mode` 内容 | 谁部署 | 你要做的 |
+|--------------------|--------|----------|
+| `github`（默认） | GitHub Actions | CF 面板 **断开** Workers Builds（避免重复部署） |
+| `cf` | Cloudflare Workers Builds | 无需额外操作；GitHub Actions 会自动跳过 |
+
+切换方法：改 `.deploy-mode` 的值 → `git push` → 去对应平台开/关另一条。  
+两种方式都**只部署代码 + D1**，不碰加密变量。
 
 若用 GitHub Actions，在仓库 **Settings → Secrets and variables → Actions** 配置：
 

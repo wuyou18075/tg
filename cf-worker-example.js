@@ -3256,4 +3256,43 @@ export default {
         const text = renderTemplate(b && b.template, machines, total);
         return json({ ok: true, text });
       } catch (e) {
-        return json({ ok: false, error: String(e && e.message ? e.message : e
+        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
+      }
+    }
+
+    // POST /api/tg-summary — 发送 TG 汇总
+    if (req.method === "POST" && url.pathname === "/api/tg-summary") {
+      const result = await tgSummary(env);
+      if (!result.ok) return json(result, 400);
+      return json(result);
+    }
+
+    // GET / — 看板
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      return html(dashboardPage());
+    }
+
+    return json({ ok: false, error: "not found" }, 404);
+  },
+
+  /** 定时触发：每 15 分钟检查一次，到设置的 TG 汇报时间则发送 */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        if (!env.DB) return;
+        await checkOffline(env);
+        const t_time = (await getConfigValue(env, "t_time")) || "20:00:00";
+        const m = /^(\d{2}):(\d{2})/.exec(t_time);
+        if (!m) return;
+        const th = m[1], tm = m[2];
+        const sh = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
+        const hh = String(sh.getHours()).padStart(2, "0");
+        const mm = String(sh.getMinutes()).padStart(2, "0");
+        if (hh === th && mm === tm) {
+          const r = await tgSummary(env);
+          if (!r || !r.ok) console.log("[scheduled] TG summary skip:", r && r.error);
+        }
+      } catch (e) { console.log("[scheduled] error", e && e.message); }
+    })());
+  },
+};

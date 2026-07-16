@@ -6,5 +6,13 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "start": "wrangler dev"
+  },
+  "cloudflare": {
+    "description": {
+      "PASSWORD": "必填。看板登录密码，自己设一个。",
+      "TG_BOT_TOKEN": "可选。Telegram Bot Token，用于 TG 汇总。",
+      "TG_ID": "可选。Telegram Chat ID。",
+      "TG_TOKEN": "可选。旧版全局上报密码，通常留空。"
+    }
   }
 }

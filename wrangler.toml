@@ -3,7 +3,9 @@ main = "./cf-worker-example.js"
 compatibility_date = "2024-11-01"
 workers_dev = true
 
-# D1 binding for CF Builds / wrangler deploy
+# D1 绑定。
+# - 你自己 git 部署：保留下方真实 database_id。
+# - 新用户「一键部署」：CF 会自动创建新 D1 并回填 ID，覆盖此处的值。
 [[d1_databases]]
 binding = "DB"
 database_name = "tg-cf-web"

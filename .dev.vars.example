@@ -1,0 +1,17 @@
+# 一键部署（Deploy to Cloudflare 按钮）会读取本文件，
+# 在部署表单里逐项让你填值，并自动创建为「加密变量（Secret）」。
+# 本文件只放示例与注释，不含真实密码，可安全进仓库。
+#
+# 日常 git 部署不需要本文件；变量直接在 CF Dashboard → 加密变量 维护。
+
+# 必填：看板登录密码（自己设一个）
+PASSWORD = "change-me-please"
+
+# 可选：Telegram 机器人 Token（不填则不发 TG 汇总）
+# TG_BOT_TOKEN = "123456:ABC..."
+
+# 可选：Telegram 聊天/群 ID
+# TG_ID = "-1001234567890"
+
+# 可选：旧版全局上报密码；新版每台 VPS 用看板生成的独立 token，通常留空
+# TG_TOKEN = ""

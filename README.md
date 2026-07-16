@@ -4,6 +4,24 @@
 
 ---
 
+## 一键部署（新用户推荐）
+
+点下方按钮，Cloudflare 会打开部署表单：
+
+[![部署到 Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wuyou18075/tg)
+
+表单里会让你填：
+
+- `PASSWORD`：看板登录密码（必填，自己设）
+- `TG_BOT_TOKEN` / `TG_ID`：可选，用于 TG 汇总
+- D1 数据库：CF 自动创建并绑定，无需手动建
+
+填完 Deploy 即可。所有变量自动创建为**加密变量**，后续部署不会删。部署完打开 Worker 地址用 `PASSWORD` 登录。
+
+> 已部署用户日常更新代码用 git push（见下方完整方案），不必重复一键部署。
+
+---
+
 ## 快速入门：仅 Telegram 日报（无需 Cloudflare）
 
 只想每天在 Telegram 收 VPS 流量日报、不需要 Web 看板时，在 Debian 13 上执行：

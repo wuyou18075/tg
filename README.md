@@ -1,4 +1,4 @@
-# 流量汇报（Telegram + Cloudflare）
+# CF 看板(vps-cf-tg)
 
 [![部署到 Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wuyou18075/tg)
 
@@ -336,3 +336,4 @@ bash /path/to/sum.sh --uninstall
 4. 打开看板登录 → 设置 TG → 添加 VPS → 在机器上重跑安装命令
 
 仓库内 **不包含** 真实 `database_id`，避免 CI/Builds 把占位符当 UUID 导致 `10021` 错误。
+                   

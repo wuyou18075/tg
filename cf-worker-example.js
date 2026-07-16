@@ -963,18 +963,21 @@ async function forceReportPushAll(env) {
   for (const r of rows) {
     const mid = r.machine_id;
     const cb = (r.callback_url || "").trim();
-    // 优先 per-machine token；无则回退全局 TG_TOKEN（与上报鉴权一致）
-    let token = String(r.token || "").replace(/\r/g, "").trim();
-    if (!token && globalTok) token = globalTok;
+    const vpsTok = String(r.token || "").replace(/\r/g, "").trim();
+    // 候选密钥：per-machine + 全局 TG_TOKEN（去重）。历史上上报可用 TG_TOKEN、
+    // 推送却只用旧 vps_tokens，导致 401；这里两种都试。
+    const tokens = [];
+    if (vpsTok) tokens.push(vpsTok);
+    if (globalTok && globalTok !== vpsTok) tokens.push(globalTok);
     if (!isValidCallbackUrl(cb)) {
       skipped.push({ machine_id: mid, reason: "no_callback_url" });
       continue;
     }
-    if (!token) {
+    if (!tokens.length) {
       skipped.push({ machine_id: mid, reason: "no_token" });
       continue;
     }
-    targets.push({ machine_id: mid, callback_url: cb, token });
+    targets.push({ machine_id: mid, callback_url: cb, tokens });
   }
 
   const resultsPush = [];
@@ -982,9 +985,30 @@ async function forceReportPushAll(env) {
   for (let i = 0; i < targets.length; i += concurrency) {
     const chunk = targets.slice(i, i + concurrency);
     const part = await Promise.all(chunk.map(async (t) => {
-      const tok = String(t.token || "").replace(/\r/g, "").trim();
-      const r = await pushForceToCallback(t.callback_url, tok, force_at);
-      return { machine_id: t.machine_id, callback_url: t.callback_url, ...r };
+      let last = { ok: false, status: 0, body: "no token tried" };
+      let usedTok = "";
+      for (const tok of t.tokens) {
+        const r = await pushForceToCallback(t.callback_url, tok, force_at);
+        last = r;
+        usedTok = tok;
+        if (r.ok) {
+          // 成功用的密钥写回，下次直接命中
+          try { await upsertVpsToken(env, t.machine_id, tok); } catch { /* ignore */ }
+          break;
+        }
+        // 非鉴权失败（超时/连不上）不必再试其它 token
+        const body = String(r.body || "");
+        const isAuth =
+          r.status === 401 ||
+          /unauthor|token mismatch|token length|bad signature|missing bearer/i.test(body);
+        if (!isAuth) break;
+      }
+      return {
+        machine_id: t.machine_id,
+        callback_url: t.callback_url,
+        tried: t.tokens.length,
+        ...last,
+      };
     }));
     resultsPush.push(...part);
   }
@@ -1879,7 +1903,7 @@ function reasonLabel(state, detail, status) {
       return d.slice(0, 160);
     }
     if (/token length mismatch|token mismatch|missing bearer|unauthorized/i.test(d)) {
-      return "鉴权失败（看板 token 与 VPS 上 CF_TOKEN 不一致）。请在看板点「更新注册」复制命令，在 VPS 重跑安装，确保两边 token 相同 · " + d.slice(0, 80);
+      return "鉴权失败：VPS 的 CF_TOKEN 与看板 vps_tokens/TG_TOKEN 都不匹配。部署最新 Worker 后会自动双密钥重试；仍失败请用看板「更新注册」整段重装 · " + d.slice(0, 80);
     }
     if (/bad signature/i.test(d)) {
       return "HMAC 签名不匹配（token 可能一致但 body/时间戳异常）· " + d.slice(0, 80);

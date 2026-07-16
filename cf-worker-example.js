@@ -986,22 +986,26 @@ async function forceReportPushAll(env) {
     const chunk = targets.slice(i, i + concurrency);
     const part = await Promise.all(chunk.map(async (t) => {
       let last = { ok: false, status: 0, body: "no token tried" };
-      let usedTok = "";
+      const triedMeta = [];
       for (const tok of t.tokens) {
         const r = await pushForceToCallback(t.callback_url, tok, force_at);
         last = r;
-        usedTok = tok;
+        triedMeta.push(tok.slice(0, 6) + "…(len=" + tok.length + ")");
         if (r.ok) {
-          // 成功用的密钥写回，下次直接命中
           try { await upsertVpsToken(env, t.machine_id, tok); } catch { /* ignore */ }
           break;
         }
-        // 非鉴权失败（超时/连不上）不必再试其它 token
         const body = String(r.body || "");
         const isAuth =
           r.status === 401 ||
           /unauthor|token mismatch|token length|bad signature|missing bearer/i.test(body);
         if (!isAuth) break;
+      }
+      if (!last.ok && triedMeta.length) {
+        last = {
+          ...last,
+          body: String(last.body || "") + " · 已尝试密钥前缀: " + triedMeta.join(" | "),
+        };
       }
       return {
         machine_id: t.machine_id,

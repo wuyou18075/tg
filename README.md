@@ -206,6 +206,13 @@ systemctl start traffic-telegram-report-cf.service
 
 ## 排查「获取流量」失败
 
+> **重要：** 回调服务进程会缓存 token。仅改 conf 不 `restart` 时，获取流量会一直 401。安装脚本已改为 `systemctl restart …-cb.service`；手动修复：
+> ```bash
+> systemctl restart traffic-telegram-report-cb.service
+> journalctl -u traffic-telegram-report-cb.service -n 10 --no-pager
+> ```
+
+
 结果弹窗「说明」列会写具体原因。常见：
 
 | 说明关键词 | 处理 |

@@ -1,1 +1,10 @@
-{"type":"module"}
+{
+  "name": "cf-tg-web",
+  "private": true,
+  "type": "module",
+  "main": "cf-worker-example.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "start": "wrangler dev"
+  }
+}

@@ -17,5 +17,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          command: deploy ./cf-worker-example.js --name cf-tg-web --compatibility-date 2024-11-01
           wranglerVersion: "3.109.0"

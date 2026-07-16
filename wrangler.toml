@@ -1,8 +1,9 @@
 name = "cf-tg-web"
-main = "cf-worker-example.js"
+main = "./cf-worker-example.js"
 compatibility_date = "2024-11-01"
+workers_dev = true
 
-# D1 绑定（CF Builds / wrangler 部署以本文件为准）
+# D1 binding for CF Builds / wrangler deploy
 [[d1_databases]]
 binding = "DB"
 database_name = "tg-cf-web"

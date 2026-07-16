@@ -7,6 +7,10 @@
 # 必填：看板登录密码（自己设一个）
 PASSWORD = "change-me-please"
 
+# 可选：会话签名密钥（随机长串）。不填则用 PASSWORD 签名 Cookie。
+# 单独设置后：改 PASSWORD 不会踢掉已登录会话；改 SESSION_SECRET 会使全部会话失效。
+# SESSION_SECRET = "replace-with-long-random-string"
+
 # 可选：TG 机器人 Token，VPS 用它给 TG 发消息（不填则不发 TG 汇总）
 # TG_TOKEN = "123456:ABC..."
 

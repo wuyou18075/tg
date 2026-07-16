@@ -21,6 +21,9 @@ import { connect as cfTcpConnect } from "cloudflare:sockets";
 
 const SESSION_TTL = 60 * 60 * 24 * 7;
 const COOKIE_NAME = "dash_session";
+/** 登录失败限流：同 IP 窗口内最多失败次数 */
+const LOGIN_FAIL_MAX = 8;
+const LOGIN_FAIL_WINDOW_SEC = 15 * 60;
 
 /** 运行时无 DB 时的说明（列出 env 键名，不含密钥值） */
 function missingDbError(env) {
@@ -172,19 +175,41 @@ async function sha256Hex(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** 会话签名密钥：优先 SESSION_SECRET，否则回退 PASSWORD（兼容旧部署） */
+function sessionSecret(env) {
+  const s = (env && (env.SESSION_SECRET || env.PASSWORD)) || "";
+  return String(s);
+}
+
 async function makeSessionToken(env) {
+  const secret = sessionSecret(env);
+  if (!secret) return "";
   const rnd = crypto.randomUUID() + crypto.randomUUID();
-  const sig = await sha256Hex(`${rnd}:${env.PASSWORD || ""}:dash`);
-  return `${rnd}.${sig}`;
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL;
+  // rnd.exp.sig —— 签名含过期时间；改 PASSWORD 或 SESSION_SECRET 会使旧会话失效
+  const sig = await sha256Hex(`${rnd}:${exp}:${secret}:dash`);
+  return `${rnd}.${exp}.${sig}`;
 }
 
 async function verifySessionToken(token, env) {
   if (!token || !env.PASSWORD) return false;
-  const i = token.lastIndexOf(".");
-  if (i < 0) return false;
-  const rnd = token.slice(0, i);
-  const sig = token.slice(i + 1);
-  return sig === (await sha256Hex(`${rnd}:${env.PASSWORD}:dash`)) && rnd.length >= 32;
+  const secret = sessionSecret(env);
+  if (!secret) return false;
+  const parts = String(token).split(".");
+  // 新格式 rnd.exp.sig
+  if (parts.length === 3) {
+    const [rnd, expStr, sig] = parts;
+    const exp = Number(expStr);
+    if (!rnd || rnd.length < 32 || !Number.isFinite(exp)) return false;
+    if (Math.floor(Date.now() / 1000) > exp) return false;
+    return sig === (await sha256Hex(`${rnd}:${exp}:${secret}:dash`));
+  }
+  // 兼容旧格式 rnd.sig（无 exp；仅当仍用 PASSWORD 作 secret 时可验）
+  if (parts.length === 2) {
+    const [rnd, sig] = parts;
+    return !!rnd && rnd.length >= 32 && sig === (await sha256Hex(`${rnd}:${secret}:dash`));
+  }
+  return false;
 }
 
 function sessionCookie(token, maxAge = SESSION_TTL) {
@@ -195,6 +220,68 @@ async function requireDash(req, env) {
   // 未配 PASSWORD：视为未登录，拦截到登录页并提示配置（不再裸奔放行）
   if (!env.PASSWORD) return false;
   return verifySessionToken(parseCookies(req)[COOKIE_NAME], env);
+}
+
+/** 登录失败计数 key（按 IP） */
+function loginFailKey(ip) {
+  return "login_fail:" + String(ip || "-").slice(0, 64);
+}
+
+/** 是否处于登录锁定；返回 { locked, remainSec, fails } */
+async function getLoginLock(env, ip) {
+  if (!env.DB) return { locked: false, remainSec: 0, fails: 0 };
+  try {
+    const row = await env.DB.prepare(`SELECT value, updated_at FROM config WHERE key = ?`)
+      .bind(loginFailKey(ip)).first();
+    if (!row) return { locked: false, remainSec: 0, fails: 0 };
+    const fails = Number(row.value) || 0;
+    const updated = Number(row.updated_at) || 0;
+    const now = Math.floor(Date.now() / 1000);
+    if (now - updated > LOGIN_FAIL_WINDOW_SEC) {
+      // 窗口过期：清零
+      try { await env.DB.prepare(`DELETE FROM config WHERE key = ?`).bind(loginFailKey(ip)).run(); } catch {}
+      return { locked: false, remainSec: 0, fails: 0 };
+    }
+    if (fails >= LOGIN_FAIL_MAX) {
+      return { locked: true, remainSec: Math.max(1, LOGIN_FAIL_WINDOW_SEC - (now - updated)), fails };
+    }
+    return { locked: false, remainSec: 0, fails };
+  } catch {
+    return { locked: false, remainSec: 0, fails: 0 };
+  }
+}
+
+async function recordLoginFail(env, ip) {
+  if (!env.DB) return;
+  const now = Math.floor(Date.now() / 1000);
+  const key = loginFailKey(ip);
+  try {
+    const row = await env.DB.prepare(`SELECT value, updated_at FROM config WHERE key = ?`).bind(key).first();
+    let fails = 1;
+    if (row) {
+      const updated = Number(row.updated_at) || 0;
+      if (now - updated <= LOGIN_FAIL_WINDOW_SEC) fails = (Number(row.value) || 0) + 1;
+    }
+    await env.DB.prepare(
+      `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(key, String(fails), now).run();
+  } catch { /* ignore */ }
+}
+
+async function clearLoginFail(env, ip) {
+  if (!env.DB) return;
+  try { await env.DB.prepare(`DELETE FROM config WHERE key = ?`).bind(loginFailKey(ip)).run(); } catch {}
+}
+
+/** 密码比较：长度不同直接 false；等长逐字节 OR，降低时序差异 */
+function passwordEqual(a, b) {
+  const x = String(a ?? "");
+  const y = String(b ?? "");
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return d === 0;
 }
 
 // ─── D1 自动初始化 ───
@@ -287,20 +374,35 @@ async function upsertReport(env, rec) {
     Number(month.rx) || 0, Number(month.tx) || 0, now, callback_url, online_sec
   ).run();
 
-  // 节流写历史（5 分钟窗口）
+  // 写历史：5 分钟节流；跨上海自然日必须立刻落一条，避免「已是 17 号但图仍停在 16 号」
   const last = await env.DB.prepare(
     `SELECT ts FROM snapshots WHERE machine_id = ? ORDER BY ts DESC LIMIT 1`
   ).bind(mid).first();
-  if (!last || ts - Number(last.ts) >= 300) {
+  const lastTs = last ? Number(last.ts) || 0 : 0;
+  const crossedDay = !lastTs || shanghaiBucket(lastTs, false) !== shanghaiBucket(ts, false);
+  if (!lastTs || crossedDay || (ts - lastTs) >= 300) {
     await env.DB.prepare(
       `INSERT INTO snapshots (machine_id, ts, today_rx, today_tx, month_rx, month_tx)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(mid, ts, Number(today.rx) || 0, Number(today.tx) || 0,
       Number(month.rx) || 0, Number(month.tx) || 0).run();
   }
+  // 90 天清理改到 scheduled 每日一次，避免每条上报都扫表
+}
 
-  // 清理 90 天前
-  await env.DB.prepare(`DELETE FROM snapshots WHERE ts < ?`).bind(now - 90 * 86400).run();
+/** 清理过期 snapshot（90 天）；每日最多执行一次（用 config 日锁） */
+async function cleanupOldSnapshots(env) {
+  if (!env.DB) return;
+  const now = Math.floor(Date.now() / 1000);
+  const today = shanghaiBucket(now, false);
+  try {
+    const last = await getConfigValue(env, "last_snapshot_cleanup_date");
+    if (last === today) return;
+    await env.DB.prepare(`DELETE FROM snapshots WHERE ts < ?`).bind(now - 90 * 86400).run();
+    await setConfigValue(env, "last_snapshot_cleanup_date", today);
+  } catch (e) {
+    console.log("[cleanup] snapshots", e && e.message);
+  }
 }
 
 async function listMachines(env) {
@@ -338,9 +440,154 @@ async function getHistory(env, mid, hours) {
   return results || [];
 }
 
+/** 秒级时间戳 → 上海时区日历部件 {y,m,d}（Worker 默认 UTC，不能直接 getDate） */
+function shanghaiYmd(tsSec) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(Number(tsSec) * 1000));
+  const get = (t) => parts.find((p) => p.type === t)?.value || "00";
+  return { y: Number(get("year")), m: Number(get("month")), d: Number(get("day")) };
+}
+
+/** 上海时区「今天」的 day/month bucket 标签 */
+function shanghaiBucket(tsSec, isMonth) {
+  const { y, m, d } = shanghaiYmd(tsSec);
+  if (isMonth) return y + "-" + String(m).padStart(2, "0");
+  return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+}
+
+/** 从上海时区今天起，往前推 i 天/月 的 bucket 标签 */
+function shanghaiLabelOffset(i, isMonth) {
+  // 用「上海当前时刻」的 epoch，再偏移；避免 UTC 午夜边界
+  const nowSec = Math.floor(Date.now() / 1000);
+  const { y, m, d } = shanghaiYmd(nowSec);
+  if (isMonth) {
+    // 月份：y/m 减 i
+    let yy = y, mm = m - i;
+    while (mm <= 0) { mm += 12; yy -= 1; }
+    return yy + "-" + String(mm).padStart(2, "0");
+  }
+  // 日：构造上海日历日的近似 epoch（UTC+8 正午防 DST 边界），再减 i 天
+  const noonUtcMs = Date.UTC(y, m - 1, d, 4, 0, 0); // 上海 12:00 = UTC 04:00
+  const t = Math.floor(noonUtcMs / 1000) - i * 86400;
+  return shanghaiBucket(t, false);
+}
+
+/** 上海时区小时桶标签：YYYY-MM-DD HH:00 */
+function shanghaiHourBucket(tsSec) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(Number(tsSec) * 1000));
+  const get = (t) => parts.find((p) => p.type === t)?.value || "00";
+  return get("year") + "-" + get("month") + "-" + get("day") + " " + get("hour") + ":00";
+}
+
+/** 当前上海时刻往前第 i 小时的整点标签（i=0 当前小时） */
+function shanghaiHourLabelOffset(i) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // 取当前上海小时，再减 i 小时：用 UTC 近似减 3600*i（上海无夏令时，安全）
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(nowSec * 1000));
+  const get = (t) => Number(parts.find((p) => p.type === t)?.value || 0);
+  // 构造该上海小时的 UTC epoch：上海 HH:30 = UTC (HH-8):30
+  const y = get("year"), m = get("month"), d = get("day"), h = get("hour");
+  const utcMs = Date.UTC(y, m - 1, d, h - 8, 30, 0) - i * 3600 * 1000;
+  return shanghaiHourBucket(Math.floor(utcMs / 1000));
+}
+
+/**
+ * 日内小时折线：近 span 小时内，各整点「该小时新增流量」
+ *  - 用 snapshot 的 today_rx/tx 累计值差分（跨自然日重置时不减前一日）
+ *  - mid 空 = 全部机器求和
+ */
+async function getHistoryHourly(env, { mid, span }) {
+  const n = Math.min(72, Math.max(6, Number(span) || 24));
+  const now = Math.floor(Date.now() / 1000);
+  const since = now - n * 3600 - 3600; // 多取 1h 便于首点差分
+
+  let sql = `SELECT machine_id, ts, today_rx, today_tx
+             FROM snapshots WHERE ts >= ?`;
+  const binds = [since];
+  if (mid) {
+    sql += ` AND machine_id = ?`;
+    binds.push(mid);
+  }
+  sql += ` ORDER BY ts ASC`;
+  const { results } = await env.DB.prepare(sql).bind(...binds).all();
+  const rows = results || [];
+
+  // 每机每小时取最后一条累计值
+  const lastByHourMid = new Map(); // hour|mid -> {hour, mid, day, rx, tx}
+  for (const r of rows) {
+    const ts = Number(r.ts) || 0;
+    const hour = shanghaiHourBucket(ts);
+    const day = shanghaiBucket(ts, false);
+    const k = hour + "|" + r.machine_id;
+    lastByHourMid.set(k, {
+      hour, mid: r.machine_id, day,
+      rx: Number(r.today_rx) || 0,
+      tx: Number(r.today_tx) || 0,
+    });
+  }
+
+  // 按机分组，按小时排序后差分
+  const byMid = new Map();
+  for (const v of lastByHourMid.values()) {
+    if (!byMid.has(v.mid)) byMid.set(v.mid, []);
+    byMid.get(v.mid).push(v);
+  }
+  const deltaByHour = new Map(); // hour -> {rx, tx}
+  for (const list of byMid.values()) {
+    list.sort((a, b) => (a.hour < b.hour ? -1 : a.hour > b.hour ? 1 : 0));
+    let prev = null;
+    for (const cur of list) {
+      let drx = cur.rx, dtx = cur.tx;
+      if (prev && prev.day === cur.day) {
+        drx = Math.max(0, cur.rx - prev.rx);
+        dtx = Math.max(0, cur.tx - prev.tx);
+      }
+      // 跨日：首点用累计本身（即当天截至该小时的量）；若同日多点则差分
+      // 若跨日且 prev 存在：用 cur 累计（从 0 起的今日量），合理
+      if (prev && prev.day !== cur.day) {
+        drx = Math.max(0, cur.rx);
+        dtx = Math.max(0, cur.tx);
+      }
+      if (!prev) {
+        // 序列第一点：无前值，无法可靠估「本小时增量」，记 0 避免把全天累计当小时增量
+        drx = 0;
+        dtx = 0;
+      }
+      const acc = deltaByHour.get(cur.hour) || { rx: 0, tx: 0 };
+      acc.rx += drx;
+      acc.tx += dtx;
+      deltaByHour.set(cur.hour, acc);
+      prev = cur;
+    }
+  }
+
+  // 时间轴：近 n 小时（含当前小时）
+  const labels = [];
+  for (let i = n - 1; i >= 0; i--) labels.push(shanghaiHourLabelOffset(i));
+
+  const points = labels.map((bucket) => {
+    const v = deltaByHour.get(bucket) || { rx: 0, tx: 0 };
+    return { bucket, rx: v.rx, tx: v.tx, total: v.rx + v.tx };
+  });
+  return { mode: "hour", span: n, machine_id: mid || null, points };
+}
+
 /** 日/月聚合：单机 mid 或全部（mid 空）。
  *  day:  每天取各机最后一条 snapshot 的 today_rx/tx，再按日求和
  *  month: 每月取各机最后一条 snapshot 的 month_rx/tx，再按月求和
+ *  分桶统一用 Asia/Shanghai，与 VPS 本机「今日」对齐
  */
 async function getHistoryAgg(env, { mid, mode, span }) {
   const isMonth = mode === "month";
@@ -362,10 +609,7 @@ async function getHistoryAgg(env, { mid, mode, span }) {
   // key → { rx, tx }  先按 (bucket, machine) 取最后一条，再跨机求和
   const lastByBucketMid = new Map();
   for (const r of rows) {
-    const d = new Date(Number(r.ts) * 1000);
-    const bucket = isMonth
-      ? (d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"))
-      : (d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"));
+    const bucket = shanghaiBucket(Number(r.ts) || 0, isMonth);
     const k = bucket + "|" + r.machine_id;
     lastByBucketMid.set(k, {
       bucket,
@@ -382,25 +626,43 @@ async function getHistoryAgg(env, { mid, mode, span }) {
     byBucket.set(v.bucket, cur);
   }
 
-  // 补齐时间轴空桶
+  // 用 machines 表「当前值」覆盖今天/本月桶：获取流量已更新列表但 snapshot 尚未写入时，图也能显示当天
+  try {
+    let liveSql = `SELECT machine_id, today_rx, today_tx, month_rx, month_tx, last_ts FROM machines`;
+    const liveBinds = [];
+    if (mid) {
+      liveSql += ` WHERE machine_id = ?`;
+      liveBinds.push(mid);
+    }
+    const live = liveBinds.length
+      ? await env.DB.prepare(liveSql).bind(...liveBinds).all()
+      : await env.DB.prepare(liveSql).all();
+    const liveRows = live.results || [];
+    if (liveRows.length) {
+      const todayKey = shanghaiBucket(now, false);
+      const monthKey = shanghaiBucket(now, true);
+      if (isMonth) {
+        let rx = 0, tx = 0;
+        for (const r of liveRows) {
+          rx += Number(r.month_rx) || 0;
+          tx += Number(r.month_tx) || 0;
+        }
+        byBucket.set(monthKey, { rx, tx });
+      } else {
+        let rx = 0, tx = 0;
+        for (const r of liveRows) {
+          rx += Number(r.today_rx) || 0;
+          tx += Number(r.today_tx) || 0;
+        }
+        byBucket.set(todayKey, { rx, tx });
+      }
+    }
+  } catch { /* ignore live overlay */ }
+
+  // 补齐时间轴空桶（上海时区）
   const labels = [];
-  if (isMonth) {
-    const base = new Date();
-    base.setDate(1);
-    base.setHours(0, 0, 0, 0);
-    for (let i = n - 1; i >= 0; i--) {
-      const d = new Date(base);
-      d.setMonth(d.getMonth() - i);
-      labels.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
-    }
-  } else {
-    const base = new Date();
-    base.setHours(0, 0, 0, 0);
-    for (let i = n - 1; i >= 0; i--) {
-      const d = new Date(base);
-      d.setDate(d.getDate() - i);
-      labels.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"));
-    }
+  for (let i = n - 1; i >= 0; i--) {
+    labels.push(shanghaiLabelOffset(i, isMonth));
   }
 
   const points = labels.map((bucket) => {
@@ -481,19 +743,45 @@ async function getTgStatus(env, verify = false) {
 async function saveConfig(env, data) {
   if (!env.DB) throw new Error(missingDbError(env));
   const now = Math.floor(Date.now() / 1000);
-  const normalized = {
-    t_token: data.t_token !== undefined ? String(data.t_token).trim() : undefined,
-    t_id: data.t_id !== undefined ? String(data.t_id).trim() : undefined,
-    t_time: data.t_time !== undefined ? (String(data.t_time).trim() || "20:00:00") : undefined,
-    cf_time: data.cf_time !== undefined ? (String(data.cf_time).trim() || "0 * * * *") : undefined,
-  };
-  const keys = ["t_token", "t_id", "t_time", "cf_time"];
-  const stmts = keys.filter(k => normalized[k] !== undefined).map(k =>
-    env.DB.prepare(
+  // t_token / t_id：空字符串表示「回退环境变量」，删除 D1 中的 key，避免空串污染
+  // t_time / cf_time：空则写默认值
+  const stmts = [];
+  if (data.t_token !== undefined) {
+    const v = String(data.t_token).trim();
+    if (v) {
+      stmts.push(env.DB.prepare(
+        `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).bind("t_token", v, now));
+    } else {
+      stmts.push(env.DB.prepare(`DELETE FROM config WHERE key = ?`).bind("t_token"));
+    }
+  }
+  if (data.t_id !== undefined) {
+    const v = String(data.t_id).trim();
+    if (v) {
+      stmts.push(env.DB.prepare(
+        `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).bind("t_id", v, now));
+    } else {
+      stmts.push(env.DB.prepare(`DELETE FROM config WHERE key = ?`).bind("t_id"));
+    }
+  }
+  if (data.t_time !== undefined) {
+    const v = String(data.t_time).trim() || "20:00:00";
+    stmts.push(env.DB.prepare(
       `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    ).bind(k, normalized[k], now)
-  );
+    ).bind("t_time", v, now));
+  }
+  if (data.cf_time !== undefined) {
+    const v = String(data.cf_time).trim() || "0 * * * *";
+    stmts.push(env.DB.prepare(
+      `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind("cf_time", v, now));
+  }
   if (stmts.length) await env.DB.batch(stmts);
 }
 
@@ -572,9 +860,10 @@ async function upsertVpsToken(env, mid, token) {
   const tok = String(token).replace(/\r/g, "").trim();
   if (!tok || tok.length < 8) return;
   const now = Math.floor(Date.now() / 1000);
+  // 成功确认的 token 提正：同时清掉 pending，避免 force 推送后状态不一致
   await env.DB.prepare(
-    `INSERT INTO vps_tokens (machine_id, token, created_at) VALUES (?, ?, ?)
-     ON CONFLICT(machine_id) DO UPDATE SET token = excluded.token`,
+    `INSERT INTO vps_tokens (machine_id, token, created_at, pending_token) VALUES (?, ?, ?, NULL)
+     ON CONFLICT(machine_id) DO UPDATE SET token = excluded.token, pending_token = NULL`,
   ).bind(mid, tok, now).run();
 }
 
@@ -773,19 +1062,21 @@ async function generateUpdateCommand(env, request, body) {
     cf_url,
     cf_time,
     cb_port,
-    token: vpsToken,
+    // 命令本身含完整 token；响应体不再单独回传明文，只给预览
     token_preview: vpsToken.slice(0, 8) + "...",
   };
 }
 
-/** 看板「更新注册」弹窗预填 */
-async function getMachineReg(env, request, mid) {
+/** 看板「更新注册」弹窗预填。
+ *  默认不返回完整 access_token（仅前缀）；?reveal=1 才返回明文（生成命令时仍走 generate-update）。
+ */
+async function getMachineReg(env, request, mid, opts = {}) {
   if (!isValidMachineId(mid)) {
     return { ok: false, error: "机器 ID 无效" };
   }
   if (!env.DB) return { ok: false, error: missingDbError(env) };
   const row = await env.DB.prepare(
-    `SELECT machine_id, hostname, interface, last_ts FROM machines WHERE machine_id = ?`,
+    `SELECT machine_id, hostname, interface, last_ts, callback_url FROM machines WHERE machine_id = ?`,
   ).bind(mid).first();
   const cfg = await getConfig(env);
   const url = new URL(request.url);
@@ -793,6 +1084,7 @@ async function getMachineReg(env, request, mid) {
   let token = await getVpsTokenFull(env, mid);
   if (token) token = String(token).replace(/\r/g, "").trim();
   if (!token) token = await getOrCreateVpsToken(env, mid);
+  const reveal = !!(opts && opts.reveal);
   return {
     ok: true,
     machine_id: mid,
@@ -800,7 +1092,10 @@ async function getMachineReg(env, request, mid) {
     interface: (row && row.interface) || "",
     last_ts: (row && row.last_ts) || 0,
     exists: !!row,
-    access_token: token,
+    // 完整 token 仅 reveal=1；默认只给预览，降低 XSS/共享浏览器泄露面
+    access_token: reveal ? token : "",
+    token_preview: token ? (token.slice(0, 8) + "...") : "",
+    has_token: !!token,
     cf_url: url.origin + "/api/report",
     cf_time: cfg.cf_time || "0 * * * *",
     cb_port: row && row.callback_url ? portFromCallback(row.callback_url) : String(DEFAULT_CB_PORT),
@@ -1103,7 +1398,7 @@ async function pushForceToCallback(callbackUrl, token, forceAt) {
 async function forceReportPushAll(env) {
   const force_at = await setForceReportAll(env);
   const { results } = await env.DB.prepare(
-    `SELECT m.machine_id, m.callback_url, t.token
+    `SELECT m.machine_id, m.callback_url, t.token, t.pending_token
      FROM machines m
      LEFT JOIN vps_tokens t ON t.machine_id = m.machine_id
      ORDER BY m.last_ts DESC`,
@@ -1111,12 +1406,16 @@ async function forceReportPushAll(env) {
   const rows = results || [];
   const targets = [];
   const skipped = [];
-  // 统一用 access_token（vps_tokens）。不再回退全局 TG_TOKEN。
+  // 统一用 access_token（vps_tokens）。轮换后 pending 也可能在 VPS 生效，两者都试。
   for (const r of rows) {
     const mid = r.machine_id;
     const cb = (r.callback_url || "").trim();
     const accessToken = String(r.token || "").replace(/\r/g, "").trim();
-    const tokens = accessToken ? [accessToken] : [];
+    const pendToken = String(r.pending_token || "").replace(/\r/g, "").trim();
+    // 先试当前 token，再试 pending（重装后 VPS 可能已用新密钥）
+    const tokens = [];
+    if (accessToken) tokens.push(accessToken);
+    if (pendToken && pendToken !== accessToken) tokens.push(pendToken);
     if (!isValidCallbackUrl(cb)) {
       skipped.push({ machine_id: mid, reason: "no_callback_url" });
       continue;
@@ -1209,13 +1508,13 @@ const BUILTIN_TEMPLATES = [
     body: "📊 流量日报\n━━━━━━━━━━━━━\n🕐 {time}\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\n\n📥 今日  入 {today_rx} ｜ 出 {today_tx}\n🟰 合计 {today_total}\n📅 本月  入 {month_rx} ｜ 出 {month_tx}\n🟰 合计 {month_total}\n━━━━━━━━━━━━━\n{machine_lines}",
     machine_line: "{status} {m_id}  📥{today_rx} 📤{today_tx}",
   },
-  { id:"detail", name:"📈 详细日报", builtin:true,
-    body: "📈 流量详细日报\n═══════════════\n🕐 时间：{time}\n🏠 主机数：{host_count}（🟢 {online_count} 在线）\n\n━━ 今日 ━━\n📥 入站 {today_rx} | 📤 出站 {today_tx} | 🟰 {today_total}\n━━ 本月 ━━\n📥 入站 {month_rx} | 📤 出站 {month_tx} | 🟰 {month_total}\n═══════════════\n📋 各机明细：\n{machine_lines}",
-    machine_line: "{status} {m_id}（{hostname}）📥{today_rx} 📤{today_tx} | 月📥{month_rx} 📤{month_tx}",
+  { id:"detail", name:"⚡ 今日排行", builtin:true,
+    body: "⚡ 今日排行 · {time}\n在线 {online_count}/{host_count} · 合计 {today_total}\n────────────────\n{machine_lines}\n本月累计 {month_total}",
+    machine_line: "{status} {m_id}  ↑{today_rx} ↓{today_tx}",
   },
-  { id:"brief", name:"⚡ 速报", builtin:true,
-    body: "📊 流量速报 · {time}\n今日 {today_total}（📥{today_rx} 📤{today_tx}）｜ 本月 {month_total}\n{host_count} 台主机（{online_count} 在线）\n─────────\n{machine_lines}",
-    machine_line: "{status} {m_id}：日📥{today_rx}📤{today_tx} 月📥{month_rx}📤{month_tx}",
+  { id:"brief", name:"📈 详细日报", builtin:true,
+    body: "📈 详细日报 · {time}\n主机 {host_count} 台（在线 {online_count}）\n\n今日  入 {today_rx}  出 {today_tx}  共 {today_total}\n本月  入 {month_rx}  出 {month_tx}  共 {month_total}\n┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n{machine_lines}",
+    machine_line: "{status} {m_id} · {hostname}\n    日 {today_rx}/{today_tx} · 月 {month_rx}/{month_tx}",
   },
 ];
 
@@ -1236,7 +1535,7 @@ async function setConfigValue(env, key, value) {
   ).bind(key, value, now).run();
 }
 
-/** 读取所有模板（首次自动写入内置）；active 默认 simple */
+/** 读取所有模板（首次自动写入内置）；active 默认 card */
 async function getTemplates(env) {
   let raw = await getConfigValue(env, "tg_templates");
   let arr = null;
@@ -1245,7 +1544,11 @@ async function getTemplates(env) {
     arr = BUILTIN_TEMPLATES.map(x => ({ ...x }));
     await setConfigValue(env, "tg_templates", JSON.stringify(arr));
   }
-  const active = (await getConfigValue(env, "tg_active")) || "card";
+  let active = (await getConfigValue(env, "tg_active")) || "card";
+  // active 指向不存在的 id 时回退到首个模板
+  if (!arr.some((x) => x && x.id === active)) {
+    active = (arr[0] && arr[0].id) || "card";
+  }
   return { templates: arr, active };
 }
 
@@ -1259,8 +1562,12 @@ async function saveTemplates(env, templates, active) {
     machine_line: String(x.machine_line || "").slice(0, 500),
   }));
   await setConfigValue(env, "tg_templates", JSON.stringify(clean));
-  if (active) await setConfigValue(env, "tg_active", String(active));
-  return { ok: true, templates: clean, active: active || (await getConfigValue(env, "tg_active")) || "simple" };
+  let act = active ? String(active) : ((await getConfigValue(env, "tg_active")) || "card");
+  if (!clean.some((x) => x.id === act)) {
+    act = (clean[0] && clean[0].id) || "card";
+  }
+  await setConfigValue(env, "tg_active", act);
+  return { ok: true, templates: clean, active: act };
 }
 
 /** 渲染模板为 TG 消息文本 */
@@ -1277,9 +1584,17 @@ function renderTemplate(tpl, machines, totals) {
     .split("{month_rx}").join(gb(totals.month_rx))
     .split("{month_tx}").join(gb(totals.month_tx))
     .split("{month_total}").join(gb(totals.month_rx + totals.month_tx));
-  const shown = machines.slice(0, 20);
+  // 排行类模板：按今日总流量降序，方便一眼看出谁最吃流量
+  const sorted = machines.slice().sort((a, b) => {
+    const ta = ((a.today && a.today.rx) || 0) + ((a.today && a.today.tx) || 0);
+    const tb = ((b.today && b.today.rx) || 0) + ((b.today && b.today.tx) || 0);
+    return tb - ta;
+  });
+  const shown = sorted.slice(0, 20);
   const lines = shown.map(m => {
     const isOn = m.ts && (Date.now() / 1000 - m.ts) < 7200;
+    const dayTotal = ((m.today && m.today.rx) || 0) + ((m.today && m.today.tx) || 0);
+    const monthTotal = ((m.month && m.month.rx) || 0) + ((m.month && m.month.tx) || 0);
     const ln = String((tpl && tpl.machine_line) || "{status} {m_id}")
       .split("{status}").join(isOn ? "●" : "○")
       .split("{m_id}").join(m.machine_id || "?")
@@ -1287,11 +1602,13 @@ function renderTemplate(tpl, machines, totals) {
       .split("{iface}").join(m.interface || "")
       .split("{today_rx}").join(gb(m.today && m.today.rx))
       .split("{today_tx}").join(gb(m.today && m.today.tx))
+      .split("{today_total}").join(gb(dayTotal))
       .split("{month_rx}").join(gb(m.month && m.month.rx))
-      .split("{month_tx}").join(gb(m.month && m.month.tx));
+      .split("{month_tx}").join(gb(m.month && m.month.tx))
+      .split("{month_total}").join(gb(monthTotal));
     return ln;
   });
-  const more = machines.length > 20 ? ("\n...及其他 " + (machines.length - 20) + " 台") : "";
+  const more = sorted.length > 20 ? ("\n...及其他 " + (sorted.length - 20) + " 台") : "";
   return fillGlobal((tpl && tpl.body) || "")
     .split("{machine_lines}").join(lines.join("\n") + more);
 }
@@ -1337,7 +1654,10 @@ async function getLoginLogs(env, limit = 100) {
   }));
 }
 
-/** 离线检测：离线且未通知 → 发 TG + 标记；重新在线 → 清标记 */
+/** 离线检测：离线且未通知 → 发 TG + 标记；重新在线 → 清标记。
+ *  仅在 TG 发送成功后才写 offline_notified，避免「发失败却永不再告警」。
+ *  TG 未配置时不写标记，配置好后仍会告警一次。
+ */
 async function checkOffline(env) {
   if (!env.DB) return;
   const machines = await listMachines(env);
@@ -1349,14 +1669,18 @@ async function checkOffline(env) {
       const last = m.ts
         ? new Date(m.ts * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })
         : "无";
+      let sent = false;
       try {
-        await sendTgMessage(env,
+        const r = await sendTgMessage(env,
           "⚠️ 机器离线\n" + (m.machine_id || "?") +
           "\n最后上报：" + last + "\n（已记录，恢复在线前不再重复通知）");
+        sent = !!(r && r.ok);
       } catch { /* ignore */ }
-      try {
-        await env.DB.prepare(`UPDATE machines SET offline_notified = 1 WHERE machine_id = ?`).bind(m.machine_id).run();
-      } catch { /* ignore */ }
+      if (sent) {
+        try {
+          await env.DB.prepare(`UPDATE machines SET offline_notified = 1 WHERE machine_id = ?`).bind(m.machine_id).run();
+        } catch { /* ignore */ }
+      }
     } else if (isOn && notified) {
       try {
         await env.DB.prepare(`UPDATE machines SET offline_notified = 0 WHERE machine_id = ?`).bind(m.machine_id).run();
@@ -1451,12 +1775,9 @@ function loginPage(err = "", opts = {}) {
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>登录 · 流量看板</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{color-scheme:dark}
-body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:"Noto Sans SC","Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
 .card{width:min(380px,92vw);background:#121a2b;border:1px solid #243049;border-radius:14px;padding:28px 24px;box-shadow:0 12px 40px #0006}
 h1{font-size:18px;margin:0 0 6px}
 p{margin:0 0 18px;color:#8aa0c6;font-size:13px}
@@ -1483,14 +1804,12 @@ function dashboardPage() {
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>流量看板</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
-body{margin:0;font-family:"Noto Sans SC","Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
+body{margin:0;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #1e2a42;background:#0e1628}
 header h1{font-size:18px;margin:0}
 .nav{display:flex;gap:4px;margin-left:16px}
@@ -1599,7 +1918,8 @@ textarea:focus{border-color:#3b82f6}
 .tpl-active-row select{flex:0 0 auto}
 
 .row-check{width:18px;height:18px;cursor:pointer;accent-color:#3b82f6}
-
+.clock{font-variant-numeric:tabular-nums;font-size:12px;color:#9fb3d9;padding:6px 10px;border:1px solid #243049;border-radius:8px;background:#0b1220;white-space:nowrap;user-select:none}
+.clock b{color:#e8eefc;font-weight:600;margin-left:4px}
 
 
 
@@ -1615,6 +1935,7 @@ textarea:focus{border-color:#3b82f6}
     </div>
   </div>
   <div class="actions">
+    <span class="clock" id="dashClock" title="上海时间（浏览器本地计算，不请求服务器）">上海 <b>--</b></span>
     <button class="warn" onclick="sendTgSummary()" id="btnTgSum" title="向 Telegram 发送所有机器汇总">📊 TG 汇总</button>
     <form method="post" action="/logout" style="margin:0"><button type="submit">退出</button></form>
   </div>
@@ -1647,12 +1968,14 @@ textarea:focus{border-color:#3b82f6}
       </div>
       <div class="chart-toolbar">
         <div class="seg" id="modeSeg">
-          <button type="button" class="active" data-mode="day" onclick="setChartMode('day')">日统计</button>
-          <button type="button" data-mode="month" onclick="setChartMode('month')">月统计</button>
+          <button type="button" data-mode="hour" onclick="setChartMode('hour')">日内</button>
+          <button type="button" class="active" data-mode="week" onclick="setChartMode('week')">周报</button>
+          <button type="button" data-mode="month" onclick="setChartMode('month')">月报</button>
+          <button type="button" data-mode="year" onclick="setChartMode('year')">年报</button>
         </div>
         <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
         <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
-        <select id="range" onchange="loadHistory()"></select>
+        <select id="range" onchange="loadHistory()" title="仅「日内」可选跨度"></select>
       </div>
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
@@ -1697,11 +2020,11 @@ textarea:focus{border-color:#3b82f6}
 
       <label for="s_t_time">TG 汇报时间（HH:MM:SS，定时自动发送）</label>
       <input id="s_t_time" type="text" placeholder="20:00:00">
-      <div class="hint">Worker 每 15 分钟检查，到点（精确到分钟，如 20:00）自动发 TG 汇总；留空默认 20:00:00</div>
+      <div class="hint">Worker 每小时整点检查，按小时匹配（如 20:00:00 → 上海时间 20 点发）；留空默认 20:00:00</div>
 
       <label for="s_cf_time">CF 上报 cron（VPS 端默认）</label>
       <input id="s_cf_time" type="text" placeholder="0 * * * *">
-      <div class="hint">留空默认 0 * * * *（每小时）</div>
+      <div class="hint">写入安装命令的 VPS 上报周期。越密图表越细，但 CF/D1 调用越多：每小时=24次/台/天；每 6 小时=4次/台/天。看板统计（周/月/年）不依赖秒级上报。</div>
 
       <div class="save-row">
         <button class="primary" onclick="saveConfig()">保存设置</button>
@@ -1805,8 +2128,9 @@ textarea:focus{border-color:#3b82f6}
     <p class="desc">复用该机器已有参数（可编辑）。确定后生成升级/重装命令，在 VPS 上执行即可更新脚本。</p>
     <label for="upMid">机器 ID</label>
     <input id="upMid" type="text" autocomplete="off">
-    <label for="upToken">access_token（访问密钥）</label>
-    <input id="upToken" type="text" autocomplete="off" spellcheck="false">
+    <label for="upToken">access_token（默认隐藏；生成命令时用服务端已存密钥，可留空）</label>
+    <input id="upToken" type="password" autocomplete="off" spellcheck="false" placeholder="•••• 已隐藏，留空=沿用原密钥">
+    <div class="hint" id="upTokenHint" style="margin:-4px 0 8px;font-size:11px;color:#8aa0c6">仅显示前缀；完整密钥不在页面默认加载。需要改密钥可粘贴新值或勾选轮换。</div>
     <label for="upUrl">cf_url</label>
     <input id="upUrl" type="text" autocomplete="off" spellcheck="false">
     <label for="upTime">cf_time（cron）</label>
@@ -1838,12 +2162,14 @@ textarea:focus{border-color:#3b82f6}
     <p class="desc" id="histModalDesc">单机日/月累计（入站+出站堆叠）</p>
     <div class="chart-toolbar">
       <div class="seg" id="histModeSeg">
-        <button type="button" class="active" data-mode="day" onclick="setHistMode('day')">日统计</button>
-        <button type="button" data-mode="month" onclick="setHistMode('month')">月统计</button>
+        <button type="button" data-mode="hour" onclick="setHistMode('hour')">日内</button>
+        <button type="button" class="active" data-mode="week" onclick="setHistMode('week')">周报</button>
+        <button type="button" data-mode="month" onclick="setHistMode('month')">月报</button>
+        <button type="button" data-mode="year" onclick="setHistMode('year')">年报</button>
       </div>
       <label class="chk"><input type="checkbox" id="histChkRx" checked onchange="renderHistChart()"> 入站</label>
       <label class="chk"><input type="checkbox" id="histChkTx" checked onchange="renderHistChart()"> 出站</label>
-      <select id="histRange" onchange="loadHistModal()"></select>
+      <select id="histRange" onchange="loadHistModal()" title="仅「日内」可选跨度"></select>
     </div>
     <div class="chart-wrap" style="height:320px"><canvas id="histChart"></canvas></div>
     <div class="btn-row" style="margin-top:14px">
@@ -1883,7 +2209,22 @@ textarea:focus{border-color:#3b82f6}
 
 <script>
 const gb = (n) => ((Number(n)||0)/1e9).toFixed(3) + "GB";
-const fmtTime = (ts) => ts ? new Date(ts*1000).toLocaleString() : "-";
+const fmtTime = (ts) => ts ? new Date(ts*1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "-";
+/** 顶栏时钟：纯前端，上海时区，不请求 Worker */
+function tickDashClock() {
+  const el = document.getElementById("dashClock");
+  if (!el) return;
+  try {
+    const s = new Date().toLocaleString("zh-CN", {
+      timeZone: "Asia/Shanghai", hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    el.innerHTML = "上海 <b>" + s + "</b>";
+  } catch {
+    el.innerHTML = "上海 <b>" + new Date().toISOString().slice(0, 19).replace("T", " ") + "</b>";
+  }
+}
 /** 秒 → 可读时长，如 3天5小时 / 12小时30分 / 45分 */
 const fmtDuration = (sec) => {
   let s = Math.max(0, Math.floor(Number(sec) || 0));
@@ -1906,11 +2247,30 @@ let selected = null;
 let chart;
 const selectedMids = new Set();
 let histChart;
-let chartMode = "day";       // day | month  （总览）
-let histMode = "day";        // day | month  （单机弹窗）
+let chartMode = "week";      // hour | week | month | year  （总览）
+let histMode = "week";       // hour | week | month | year  （单机弹窗）
 let mainPoints = [];         // 总览聚合点
 let histPoints = [];         // 单机聚合点
 let histMid = null;
+
+/** 统计口径：UI mode → API mode/span + 文案
+ *  周报=近 7 天按日；月报=近 30 天按日；年报=近 12 个月按月；日内=小时折线
+ */
+const CHART_PRESETS = {
+  hour:  { api: "hour",  span: 24, chart: "line", title: "日内小时增量", desc: "近 24 小时各整点新增流量（折线）" },
+  week:  { api: "day",   span: 7,  chart: "bar",  title: "周报 · 近 7 天", desc: "最近 7 天每日累计（柱状）" },
+  month: { api: "day",   span: 30, chart: "bar",  title: "月报 · 近 30 天", desc: "最近一个月每天累计（柱状）" },
+  year:  { api: "month", span: 12, chart: "bar",  title: "年报 · 近 12 月", desc: "最近 12 个月每月累计（柱状）" },
+};
+function normalizeChartMode(m) {
+  if (m === "hour" || m === "week" || m === "month" || m === "year") return m;
+  // 兼容旧 localStorage：day→week，旧 month 若曾表示「月累计」现改为 year 更贴近「年」；保留 hour
+  if (m === "day") return "week";
+  return "week";
+}
+function chartPreset(mode) {
+  return CHART_PRESETS[normalizeChartMode(mode)] || CHART_PRESETS.week;
+}
 
 function switchTab(name) {
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
@@ -1919,7 +2279,8 @@ function switchTab(name) {
   document.getElementById("page" + pname).classList.add("active");
   document.getElementById("tab" + pname).classList.add("active");
   if (name === "settings") { loadConfig(); loadTemplates(); }
-  if (name === "dash") refresh();
+  // 回看板只刷新列表，图表有数据则不强制重拉，减少卡顿感
+  if (name === "dash") refresh({ history: !mainPoints.length, tg: false });
   if (name === "logs") loadLoginLogs();
 }
 
@@ -1933,6 +2294,21 @@ async function api(path, opts) {
     throw new Error(msg);
   }
   return body;
+}
+
+/** Chart.js 以 defer 加载：画图前等它就绪，避免首屏被同步脚本堵住 */
+function whenChartReady() {
+  if (typeof Chart !== "undefined") return Promise.resolve();
+  return new Promise((resolve) => {
+    let n = 0;
+    const t = setInterval(() => {
+      n++;
+      if (typeof Chart !== "undefined" || n > 100) {
+        clearInterval(t);
+        resolve();
+      }
+    }, 50);
+  });
 }
 
 function toast(msg) {
@@ -1977,19 +2353,20 @@ function machineView() {
 
 function renderTable() {
   const tb = document.getElementById("tbody");
-  tb.replaceChildren();
-  const frag = document.createDocumentFragment && false; // placeholder
-  const showCheck = !!document.getElementById("checkAll");
   const view = machineView();
   if (!view.length) {
+    tb.replaceChildren();
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 10;
     td.textContent = machines.length ? "当前筛选下无数据" : "暂无数据";
     tr.appendChild(td);
     tb.appendChild(tr);
+    updateBatchBar();
     return;
   }
+  // 用 DocumentFragment 一次挂载，减少多次回流
+  const frag = document.createDocumentFragment();
   for (const m of view) {
     const tr = document.createElement("tr");
     if (m.machine_id === selected) tr.classList.add("active");
@@ -2067,12 +2444,16 @@ function renderTable() {
     tr.appendChild(tdOps);
 
     tr.addEventListener("click", (e) => {
-      if (e.target.closest("button")) return;
+      if (e.target.closest("button") || e.target.closest("input")) return;
+      // 仅切换高亮，避免整表重绘造成「刷新感」
+      const prev = tb.querySelector("tr.active");
+      if (prev) prev.classList.remove("active");
       selected = m.machine_id;
-      renderTable();
+      tr.classList.add("active");
     });
-    tb.appendChild(tr);
+    frag.appendChild(tr);
   }
+  tb.replaceChildren(frag);
   updateBatchBar();
 }
 
@@ -2127,18 +2508,31 @@ async function batchAction(action) {
 
 function fillRangeOptions(sel, mode) {
   if (!sel) return;
+  mode = normalizeChartMode(mode);
+  // 周/月/年跨度固定，下拉只展示说明且禁用；日内可选 12/24/48/72 小时
+  if (mode !== "hour") {
+    const p = chartPreset(mode);
+    sel.replaceChildren();
+    const o = document.createElement("option");
+    o.value = String(p.span);
+    o.textContent = mode === "week" ? "固定 · 近 7 天"
+      : mode === "month" ? "固定 · 近 30 天"
+      : "固定 · 近 12 月";
+    sel.appendChild(o);
+    sel.value = String(p.span);
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
   const cur = sel.value;
-  const opts = mode === "month"
-    ? [["3","近 3 月"],["6","近 6 月"],["12","近 12 月"]]
-    : [["7","近 7 天"],["14","近 14 天"],["30","近 30 天"],["90","近 90 天"]];
+  const opts = [["12","近 12 小时"],["24","近 24 小时"],["48","近 48 小时"],["72","近 72 小时"]];
   sel.replaceChildren();
   for (const [v, t] of opts) {
     const o = document.createElement("option");
     o.value = v; o.textContent = t;
     sel.appendChild(o);
   }
-  const def = mode === "month" ? "6" : "14";
-  sel.value = opts.some(x => x[0] === cur) ? cur : def;
+  sel.value = opts.some(x => x[0] === cur) ? cur : "24";
 }
 
 function saveChartPrefs() {
@@ -2147,38 +2541,137 @@ function saveChartPrefs() {
     const rx = document.getElementById("chkRx");
     const tx = document.getElementById("chkTx");
     localStorage.setItem("dash_chart_mode", chartMode);
-    if (r && r.value) localStorage.setItem("dash_chart_span_" + chartMode, r.value);
+    if (chartMode === "hour" && r && r.value) localStorage.setItem("dash_chart_span_hour", r.value);
     if (rx) localStorage.setItem("dash_chart_rx", rx.checked ? "1" : "0");
     if (tx) localStorage.setItem("dash_chart_tx", tx.checked ? "1" : "0");
   } catch { /* ignore */ }
 }
 function loadChartPrefs() {
   try {
-    chartMode = localStorage.getItem("dash_chart_mode") === "month" ? "month" : "day";
+    chartMode = normalizeChartMode(localStorage.getItem("dash_chart_mode"));
   } catch { /* ignore */ }
 }
 function setChartMode(mode) {
-  chartMode = mode === "month" ? "month" : "day";
+  chartMode = normalizeChartMode(mode);
   document.querySelectorAll("#modeSeg button").forEach(b => {
     b.classList.toggle("active", b.dataset.mode === chartMode);
   });
   fillRangeOptions(document.getElementById("range"), chartMode);
-  // 恢复该模式下的 span
-  try {
-    const saved = localStorage.getItem("dash_chart_span_" + chartMode);
-    if (saved) document.getElementById("range").value = saved;
-  } catch { /* ignore */ }
+  if (chartMode === "hour") {
+    try {
+      const saved = localStorage.getItem("dash_chart_span_hour");
+      if (saved) document.getElementById("range").value = saved;
+    } catch { /* ignore */ }
+  }
   saveChartPrefs();
   loadHistory();
 }
 
 function setHistMode(mode) {
-  histMode = mode === "month" ? "month" : "day";
+  histMode = normalizeChartMode(mode);
   document.querySelectorAll("#histModeSeg button").forEach(b => {
     b.classList.toggle("active", b.dataset.mode === histMode);
   });
+  const desc = document.getElementById("histModalDesc");
+  if (desc) desc.textContent = chartPreset(histMode).desc;
   fillRangeOptions(document.getElementById("histRange"), histMode);
+  if (histMode === "hour") {
+    try {
+      const saved = localStorage.getItem("dash_chart_span_hour");
+      if (saved) document.getElementById("histRange").value = saved;
+    } catch { /* ignore */ }
+  }
   loadHistModal();
+}
+
+/** 折线：日内小时增量（入/出分色） */
+function buildLineChart(canvas, points, opts) {
+  const showRx = opts.showRx !== false;
+  const showTx = opts.showTx !== false;
+  const title = opts.title || "";
+  const labels = (points || []).map(p => {
+    // "2026-07-17 14:00" → "14:00"，跨天保留月-日
+    const b = String(p.bucket || "");
+    const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/.exec(b);
+    if (!m) return b;
+    return m[4];
+  });
+  const fullLabels = (points || []).map(p => p.bucket);
+  const rx = (points || []).map(p => (Number(p.rx) || 0) / 1e9);
+  const tx = (points || []).map(p => (Number(p.tx) || 0) / 1e9);
+  const datasets = [];
+  if (showRx) {
+    datasets.push({
+      label: "入站 GB/时",
+      data: rx,
+      borderColor: "#60a5fa",
+      backgroundColor: "rgba(96,165,250,0.15)",
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 4,
+      tension: 0.25,
+      fill: true,
+    });
+  }
+  if (showTx) {
+    datasets.push({
+      label: "出站 GB/时",
+      data: tx,
+      borderColor: "#34d399",
+      backgroundColor: "rgba(52,211,153,0.12)",
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 4,
+      tension: 0.25,
+      fill: true,
+    });
+  }
+  if (!datasets.length) {
+    datasets.push({
+      label: "无筛选",
+      data: labels.map(() => 0),
+      borderColor: "rgba(100,116,139,0.6)",
+      backgroundColor: "rgba(100,116,139,0.1)",
+      fill: true,
+    });
+  }
+  return new Chart(canvas, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: {
+          ticks: { maxTicksLimit: 12, color: "#8aa0c6", maxRotation: 0, autoSkip: true },
+          grid: { color: "#1e2a42" },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: "#8aa0c6" },
+          grid: { color: "#1e2a42" },
+          title: { display: true, text: "GB / 小时", color: "#8aa0c6" },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#c7d2fe" } },
+        title: { display: !!title, text: title, color: "#e8eefc" },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const i = items && items[0] ? items[0].dataIndex : 0;
+              return fullLabels[i] || (items[0] && items[0].label) || "";
+            },
+            footer: (items) => {
+              const sum = items.reduce((a, it) => a + (Number(it.parsed.y) || 0), 0);
+              return "合计 " + sum.toFixed(3) + " GB";
+            },
+          },
+        },
+      },
+    },
+  });
 }
 
 /** 堆叠柱：入站/出站分色叠成一根，高度=合计；勾选控制显示哪一层 */
@@ -2261,32 +2754,54 @@ function buildStackedChart(canvas, points, opts) {
 function renderMainChart() {
   const ctx = document.getElementById("chart");
   if (!ctx) return;
+  if (typeof Chart === "undefined") return; // Chart.js 尚未就绪
   if (chart) chart.destroy();
   const showRx = document.getElementById("chkRx").checked;
   const showTx = document.getElementById("chkTx").checked;
   saveChartPrefs();
-  chart = buildStackedChart(ctx, mainPoints, {
-    showRx, showTx,
-    title: "全部机器 · " + (chartMode === "month" ? "月累计" : "日累计"),
-  });
+  const p = chartPreset(chartMode);
+  if (p.chart === "line") {
+    chart = buildLineChart(ctx, mainPoints, {
+      showRx, showTx,
+      title: "全部机器 · " + p.title,
+    });
+  } else {
+    chart = buildStackedChart(ctx, mainPoints, {
+      showRx, showTx,
+      title: "全部机器 · " + p.title,
+    });
+  }
 }
 
 function renderHistChart() {
   const ctx = document.getElementById("histChart");
   if (!ctx) return;
+  if (typeof Chart === "undefined") return;
   if (histChart) histChart.destroy();
   const showRx = document.getElementById("histChkRx").checked;
   const showTx = document.getElementById("histChkTx").checked;
-  histChart = buildStackedChart(ctx, histPoints, {
-    showRx, showTx,
-    title: (histMid || "") + " · " + (histMode === "month" ? "月累计" : "日累计"),
-  });
+  const p = chartPreset(histMode);
+  if (p.chart === "line") {
+    histChart = buildLineChart(ctx, histPoints, {
+      showRx, showTx,
+      title: (histMid || "") + " · " + p.title,
+    });
+  } else {
+    histChart = buildStackedChart(ctx, histPoints, {
+      showRx, showTx,
+      title: (histMid || "") + " · " + p.title,
+    });
+  }
 }
 
 async function loadHistory() {
   try {
-    const span = document.getElementById("range").value || (chartMode === "month" ? "6" : "14");
-    const q = "/api/history?mode=" + chartMode + "&span=" + encodeURIComponent(span);
+    const p = chartPreset(chartMode);
+    let span = p.span;
+    if (chartMode === "hour") {
+      span = Number(document.getElementById("range").value || p.span) || p.span;
+    }
+    const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
     const data = await api(q);
     mainPoints = (data && data.points) || [];
     renderMainChart();
@@ -2298,13 +2813,19 @@ async function loadHistory() {
 
 function openHistModal(mid) {
   histMid = mid;
-  histMode = chartMode;
+  histMode = normalizeChartMode(chartMode);
   document.getElementById("histModalTitle").textContent = "流量统计 · " + mid;
-  document.getElementById("histModalDesc").textContent = "该机器日/月累计；柱高=入站+出站，分色堆叠";
+  document.getElementById("histModalDesc").textContent = chartPreset(histMode).desc;
   document.querySelectorAll("#histModeSeg button").forEach(b => {
     b.classList.toggle("active", b.dataset.mode === histMode);
   });
   fillRangeOptions(document.getElementById("histRange"), histMode);
+  if (histMode === "hour") {
+    try {
+      const saved = localStorage.getItem("dash_chart_span_hour");
+      if (saved) document.getElementById("histRange").value = saved;
+    } catch { /* ignore */ }
+  }
   document.getElementById("histChkRx").checked = document.getElementById("chkRx").checked;
   document.getElementById("histChkTx").checked = document.getElementById("chkTx").checked;
   document.getElementById("histModal").classList.add("open");
@@ -2320,11 +2841,16 @@ function closeHistModal() {
 async function loadHistModal() {
   if (!histMid) return;
   try {
-    const span = document.getElementById("histRange").value || (histMode === "month" ? "6" : "14");
-    const q = "/api/history?mode=" + histMode + "&span=" + encodeURIComponent(span)
+    const p = chartPreset(histMode);
+    let span = p.span;
+    if (histMode === "hour") {
+      span = Number(document.getElementById("histRange").value || p.span) || p.span;
+    }
+    const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span)
       + "&mid=" + encodeURIComponent(histMid);
     const data = await api(q);
     histPoints = (data && data.points) || [];
+    await whenChartReady();
     renderHistChart();
   } catch (e) {
     toast("加载单机统计失败：" + (e && e.message ? e.message : String(e)));
@@ -2343,10 +2869,14 @@ async function loadTgStatus(verify = false) {
   const el = document.getElementById("tgStatus");
   const txt = document.getElementById("tgStatusText");
   if (!el) return;
-  el.className = "tg-pill s-not_configured";
-  txt.textContent = "TG: 检测中";
+  // 非强制校验时不要先刷成「检测中」，减少首屏闪烁
+  if (verify) {
+    el.className = "tg-pill s-not_configured";
+    txt.textContent = "TG: 检测中";
+  }
   let lastErr = "";
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  const maxTry = verify ? 3 : 1;
+  for (let attempt = 1; attempt <= maxTry; attempt++) {
     try {
       const q = verify ? "?verify=1" : "";
       const d = await api("/api/tg-status" + q);
@@ -2362,28 +2892,88 @@ async function loadTgStatus(verify = false) {
         if (parts.length) tip += (tip ? " · " : "") + parts.join(" ");
       }
       el.title = (tip || "") + "（点击重新检测）";
-      return; // 成功则结束
+      return;
     } catch (e) {
       lastErr = String(e && e.message ? e.message : e);
     }
   }
-  // 3 次都失败
   el.className = "tg-pill s-invalid";
   txt.textContent = "TG: 检测失败";
-  el.title = "重试 3 次仍失败：" + lastErr;
+  el.title = (maxTry > 1 ? "重试后仍失败：" : "检测失败：") + lastErr;
 }
 
-async function refresh() {
+/**
+ * 刷新看板。opts:
+ *  - history: 是否拉统计（默认 true）
+ *  - tg: 是否拉 TG 状态（默认 true；首屏与列表并行）
+ */
+let _refreshInFlight = null;
+let _refreshQueued = null;
+async function refresh(opts = {}) {
+  // 合并并发：进行中再点刷新，只排队一次，避免连点打爆 API
+  if (_refreshInFlight) {
+    _refreshQueued = opts;
+    return _refreshInFlight;
+  }
+  const wantHistory = opts.history !== false;
+  const wantTg = opts.tg !== false;
+  _refreshInFlight = (async () => {
+    try {
+      const p = chartPreset(chartMode);
+      let span = p.span;
+      if (chartMode === "hour") {
+        span = Number((document.getElementById("range") || {}).value || p.span) || p.span;
+      }
+      const histQ = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
+
+      const tasks = [api("/api/machines")];
+      if (wantHistory) tasks.push(api(histQ));
+      else tasks.push(Promise.resolve(null));
+      if (wantTg) tasks.push(loadTgStatus(false));
+      else tasks.push(Promise.resolve(null));
+
+      const [machData, histData] = await Promise.all(tasks);
+
+      machines = (machData && machData.machines) || [];
+      if (selected && !machines.find(m => m.machine_id === selected)) selected = null;
+      renderSummary();
+      renderTable();
+
+      if (wantHistory && histData) {
+        mainPoints = histData.points || [];
+        await whenChartReady();
+        renderMainChart();
+        saveChartPrefs();
+      }
+    } catch (e) {
+      toast("刷新失败：" + (e && e.message ? e.message : String(e)));
+    } finally {
+      _refreshInFlight = null;
+      if (_refreshQueued) {
+        const q = _refreshQueued;
+        _refreshQueued = null;
+        refresh(q);
+      }
+    }
+  })();
+  return _refreshInFlight;
+}
+
+async function loadHistory() {
   try {
-    const data = await api("/api/machines");
-    machines = (data && data.machines) || [];
-    if (selected && !machines.find(m => m.machine_id === selected)) selected = null;
-    renderSummary();
-    renderTable();
-    await loadHistory();
-    loadTgStatus(false);
+    const p = chartPreset(chartMode);
+    let span = p.span;
+    if (chartMode === "hour") {
+      span = Number(document.getElementById("range").value || p.span) || p.span;
+    }
+    const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
+    const data = await api(q);
+    mainPoints = (data && data.points) || [];
+    await whenChartReady();
+    renderMainChart();
+    saveChartPrefs();
   } catch (e) {
-    toast("刷新失败：" + (e && e.message ? e.message : String(e)));
+    toast("加载统计失败：" + (e && e.message ? e.message : String(e)));
   }
 }
 
@@ -2474,7 +3064,7 @@ async function loadLoginLogs() {
 
 // ─── TG 模板 ───
 let tplList = [];
-let tplActiveId = "simple";
+let tplActiveId = "card";
 let tplEditingId = "";
 
 async function loadTemplates() {
@@ -2482,7 +3072,7 @@ async function loadTemplates() {
     const d = await api("/api/tg-templates");
     if (!d || !d.ok) return;
     tplList = d.templates || [];
-    tplActiveId = d.active || "simple";
+    tplActiveId = d.active || "card";
     renderTplUI();
   } catch (e) { /* ignore */ }
 }
@@ -2522,7 +3112,7 @@ function tplDelete() {
   if (c.builtin) { toast("内置模板不可删除"); return; }
   if (!confirm("删除模板「" + (c.name || c.id) + "」？")) return;
   tplList = tplList.filter(x => x.id !== c.id);
-  if (tplActiveId === c.id) tplActiveId = tplList[0]?.id || "simple";
+  if (tplActiveId === c.id) tplActiveId = tplList[0]?.id || "card";
   tplEditingId = tplActiveId;
   saveTplAll("已删除");
 }
@@ -2530,8 +3120,8 @@ async function tplReset() {
   if (!confirm("恢复为内置 3 个模板？自定义模板会丢失。")) return;
   tplList = [
     { id:"card", name:"📊 卡片日报", builtin:true, body:"📊 流量日报\\n━━━━━━━━━━━━━\\n🕐 {time}\\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\\n\\n📥 今日  入 {today_rx} ｜ 出 {today_tx}\\n🟰 合计 {today_total}\\n📅 本月  入 {month_rx} ｜ 出 {month_tx}\\n🟰 合计 {month_total}\\n━━━━━━━━━━━━━\\n{machine_lines}", machine_line:"{status} {m_id}  📥{today_rx} 📤{today_tx}" },
-    { id:"detail", name:"📈 详细日报", builtin:true, body:"📈 流量详细日报\\n═══════════════\\n🕐 时间：{time}\\n🏠 主机数：{host_count}（🟢 {online_count} 在线）\\n\\n━━ 今日 ━━\\n📥 入站 {today_rx} | 📤 出站 {today_tx} | 🟰 {today_total}\\n━━ 本月 ━━\\n📥 入站 {month_rx} | 📤 出站 {month_tx} | 🟰 {month_total}\\n═══════════════\\n📋 各机明细：\\n{machine_lines}", machine_line:"{status} {m_id}（{hostname}）📥{today_rx} 📤{today_tx} | 月📥{month_rx} 📤{month_tx}" },
-    { id:"brief", name:"⚡ 速报", builtin:true, body:"📊 流量速报 · {time}\\n今日 {today_total}（📥{today_rx} 📤{today_tx}）｜ 本月 {month_total}\\n{host_count} 台主机（{online_count} 在线）\\n─────────\\n{machine_lines}", machine_line:"{status} {m_id}：日📥{today_rx}📤{today_tx} 月📥{month_rx}📤{month_tx}" },
+    { id:"detail", name:"⚡ 今日排行", builtin:true, body:"⚡ 今日排行 · {time}\\n在线 {online_count}/{host_count} · 合计 {today_total}\\n────────────────\\n{machine_lines}\\n本月累计 {month_total}", machine_line:"{status} {m_id}  ↑{today_rx} ↓{today_tx}" },
+    { id:"brief", name:"📈 详细日报", builtin:true, body:"📈 详细日报 · {time}\\n主机 {host_count} 台（在线 {online_count}）\\n\\n今日  入 {today_rx}  出 {today_tx}  共 {today_total}\\n本月  入 {month_rx}  出 {month_tx}  共 {month_total}\\n┄┄┄┄┄┄┄┄┄┄┄┄┄┄\\n{machine_lines}", machine_line:"{status} {m_id} · {hostname}\\n    日 {today_rx}/{today_tx} · 月 {month_rx}/{month_tx}" },
   ];
   tplActiveId = "card"; tplEditingId = "card";
   await saveTplAll("已恢复内置");
@@ -2859,13 +3449,17 @@ async function openUpdateVps(mid) {
   document.getElementById("upCmdRegion").style.display = "none";
   document.getElementById("upBtnRegion").style.display = "flex";
   document.getElementById("upMid").value = mid || "";
-  document.getElementById("upToken").value = "加载中…";
+  document.getElementById("upToken").value = "";
+  document.getElementById("upToken").placeholder = "加载中…";
   document.getElementById("upUrl").value = "";
   document.getElementById("upTime").value = "";
   const upCbInit = document.getElementById("upCbPort");
   if (upCbInit) upCbInit.value = "";
   document.getElementById("upRotate").checked = false;
+  const hint = document.getElementById("upTokenHint");
+  if (hint) hint.textContent = "加载中…";
   try {
+    // 默认不 reveal 完整 token
     const data = await api("/api/machine-reg?mid=" + encodeURIComponent(mid));
     if (!data || !data.ok) {
       toast(data?.error || "加载注册信息失败");
@@ -2873,7 +3467,15 @@ async function openUpdateVps(mid) {
       return;
     }
     document.getElementById("upMid").value = data.machine_id || mid;
-    document.getElementById("upToken").value = data.access_token || "";
+    document.getElementById("upToken").value = "";
+    document.getElementById("upToken").placeholder = data.token_preview
+      ? ("已隐藏 · " + data.token_preview + " · 留空=沿用")
+      : "留空=沿用服务端密钥";
+    if (hint) {
+      hint.textContent = data.has_token
+        ? ("服务端已有密钥（" + (data.token_preview || "****") + "）。留空生成命令时沿用；粘贴新值可覆盖；勾选轮换则下发 pending。")
+        : "尚无密钥，生成时将自动创建。";
+    }
     document.getElementById("upUrl").value = data.cf_url || "";
     document.getElementById("upTime").value = data.cf_time || "0 * * * *";
     const upCb = document.getElementById("upCbPort");
@@ -2890,13 +3492,14 @@ function closeUpdateVps() {
 
 async function confirmUpdateVps() {
   const machine_id = document.getElementById("upMid").value.trim();
-  const access_token = document.getElementById("upToken").value.trim();
+  // 空字符串 = 不覆盖，服务端沿用已有 token
+  let access_token = document.getElementById("upToken").value.trim();
+  if (access_token === "加载中…" || access_token.indexOf("已隐藏") === 0) access_token = "";
   const cf_url = document.getElementById("upUrl").value.trim();
   const cf_time = document.getElementById("upTime").value.trim();
   const cb_port = ((document.getElementById("upCbPort") || {}).value || "").trim();
   const rotate_token = document.getElementById("upRotate").checked;
   if (!machine_id) { toast("请填写机器 ID"); return; }
-  // 空 → 用原端口（后端补）；非数字 → 报错；数字越界 → 报错
   if (cb_port && !/^\d+$/.test(cb_port)) { toast("回调端口应为纯数字"); return; }
   if (cb_port && (Number(cb_port) < 1024 || Number(cb_port) > 65535)) { toast("回调端口需在 1024-65535，当前 " + cb_port); return; }
   const btn = document.querySelector("#upBtnRegion .green");
@@ -2912,7 +3515,11 @@ async function confirmUpdateVps() {
     }
     document.getElementById("upOk").textContent = "✓ 更新命令已生成（密钥：" + (data.token_preview || "") + "）";
     document.getElementById("upCmd").textContent = data.command;
-    document.getElementById("upToken").value = data.token || access_token;
+    // 不回填完整 token 到输入框
+    document.getElementById("upToken").value = "";
+    document.getElementById("upToken").placeholder = data.token_preview
+      ? ("已隐藏 · " + data.token_preview)
+      : "留空=沿用";
     document.getElementById("upCmdRegion").style.display = "block";
     document.getElementById("upBtnRegion").style.display = "none";
     toast("命令已生成，复制到 VPS 执行即可升级脚本");
@@ -2983,7 +3590,7 @@ async function genCmd() {
   try {
     const data = await api("/api/generate?mid=" + encodeURIComponent(mid) + "&cb_port=" + encodeURIComponent(cbPort));
     if (!data || !data.ok) { toast(data?.error || "生成失败"); return; }
-    document.getElementById("vpsOk").textContent = "✓ 命令已生成（独立密码： " + (data.token||"") + "）";
+    document.getElementById("vpsOk").textContent = "✓ 命令已生成（独立密码： " + (data.token || data.token_preview || "") + "）";
     document.getElementById("vpsCmd").textContent = data.command;
     document.getElementById("vpsTokenPreview").textContent = "每台 VPS 有独立的随机密码，此密码只需在生成时使用，D1 中安全存储。";
     document.getElementById("vpsCmdRegion").style.display = "block";
@@ -3038,10 +3645,15 @@ document.querySelectorAll("#modeSeg button").forEach(b => {
   b.classList.toggle("active", b.dataset.mode === chartMode);
 });
 fillRangeOptions(document.getElementById("range"), chartMode);
-try {
-  const savedSpan = localStorage.getItem("dash_chart_span_" + chartMode);
-  if (savedSpan) document.getElementById("range").value = savedSpan;
-} catch { /* ignore */ }
+// 仅日内恢复可选跨度
+if (chartMode === "hour") {
+  try {
+    const savedSpan = localStorage.getItem("dash_chart_span_hour");
+    if (savedSpan) document.getElementById("range").value = savedSpan;
+  } catch { /* ignore */ }
+}
+tickDashClock();
+setInterval(tickDashClock, 1000);
 refresh();
 </script>`;
 }
@@ -3097,11 +3709,20 @@ export default {
           await addLoginLog(env, { ip, ua, success: false, reason: "PASSWORD 未配置" });
           return html(loginPage("未配置 PASSWORD 加密变量，无法登录。请先到 Cloudflare Dashboard 添加。", { noPassword: true }), 401);
         }
-        const ok = (pw === env.PASSWORD);
+        // 失败限流：同 IP 15 分钟内超 8 次锁定
+        const lock = await getLoginLock(env, ip);
+        if (lock.locked) {
+          const mins = Math.ceil(lock.remainSec / 60);
+          await addLoginLog(env, { ip, ua, success: false, reason: "登录锁定" });
+          return html(loginPage("尝试过多，请 " + mins + " 分钟后再试。"), 429);
+        }
+        const ok = passwordEqual(pw, env.PASSWORD);
         if (!ok) {
+          await recordLoginFail(env, ip);
           await addLoginLog(env, { ip, ua, success: false, reason: "密码错误" });
           return html(loginPage("密码错误"), 401);
         }
+        await clearLoginFail(env, ip);
         await addLoginLog(env, { ip, ua, success: true, reason: "登录成功" });
         // TG 通知（已配置则发）
         try {
@@ -3161,17 +3782,22 @@ export default {
       return json({ ok: true, machines: await listMachines(env) });
     }
 
-    // GET /api/history — mode=day|month, span=天数/月数, mid 可选（空=全部合计）
+    // GET /api/history — mode=hour|day|month, span=小时/天数/月数, mid 可选（空=全部合计）
     if (req.method === "GET" && url.pathname === "/api/history") {
       if (!env.DB) return json({ ok: true, points: [] });
       const mid = String(url.searchParams.get("mid") || "").trim();
-      const mode = String(url.searchParams.get("mode") || "day").toLowerCase() === "month" ? "month" : "day";
-      const span = Number(url.searchParams.get("span") || url.searchParams.get("hours") || (mode === "month" ? 6 : 14));
+      const modeRaw = String(url.searchParams.get("mode") || "day").toLowerCase();
+      const mode = modeRaw === "month" ? "month" : modeRaw === "hour" ? "hour" : "day";
+      const span = Number(url.searchParams.get("span") || url.searchParams.get("hours") || (mode === "month" ? 6 : mode === "hour" ? 24 : 14));
       if (mid && !isValidMachineId(mid)) return json({ ok: false, error: "mid invalid" }, 400);
       // 兼容旧 hours 参数：有 mid 且无 mode 时仍可返回原始点
       if (mid && url.searchParams.has("hours") && !url.searchParams.has("mode") && !url.searchParams.has("span")) {
         const hours = Math.min(24 * 90, Math.max(1, Number(url.searchParams.get("hours") || 168)));
         return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
+      }
+      if (mode === "hour") {
+        const agg = await getHistoryHourly(env, { mid: mid || null, span });
+        return json({ ok: true, ...agg });
       }
       const agg = await getHistoryAgg(env, { mid: mid || null, mode, span });
       return json({ ok: true, ...agg });
@@ -3207,12 +3833,13 @@ export default {
       }
     }
 
-    // GET /api/machine-reg — 更新注册弹窗预填（含完整 token）
+    // GET /api/machine-reg — 更新注册弹窗预填（默认不回完整 token；?reveal=1 才返回）
     if (req.method === "GET" && url.pathname === "/api/machine-reg") {
       const mid = String(url.searchParams.get("mid") || "").trim();
+      const reveal = url.searchParams.get("reveal") === "1";
       try {
         if (!env.DB) return json({ ok: false, error: missingDbError(env) }, 500);
-        const result = await getMachineReg(env, req, mid);
+        const result = await getMachineReg(env, req, mid, { reveal });
         if (!result.ok) return json(result, 400);
         return json(result);
       } catch (e) {
@@ -3323,23 +3950,36 @@ export default {
     return json({ ok: false, error: "not found" }, 404);
   },
 
-  /** 定时触发：每 15 分钟检查一次，到设置的 TG 汇报时间则发送 */
+  /** 定时触发：每小时整点检查一次；清理 snapshot、离线告警、到点发 TG（同日只发一次） */
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
       try {
         if (!env.DB) return;
+        await ensureSchema(env);
+        // 每日最多清一次 90 天前 snapshot（不堵上报热路径）
+        try { await cleanupOldSnapshots(env); } catch (e) { console.log("[scheduled] cleanup", e && e.message); }
         await checkOffline(env);
         const t_time = (await getConfigValue(env, "t_time")) || "20:00:00";
-        const m = /^(\d{2}):(\d{2})/.exec(t_time);
+        // 小时级 cron：只比小时（20:00 / 20:30 都在上海时间 20 点整点发）
+        const m = /^(\d{2}):/.exec(t_time);
         if (!m) return;
-        const th = m[1], tm = m[2];
+        const th = m[1];
         const sh = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
         const hh = String(sh.getHours()).padStart(2, "0");
-        const mm = String(sh.getMinutes()).padStart(2, "0");
-        if (hh === th && mm === tm) {
-          const r = await tgSummary(env);
-          if (!r || !r.ok) console.log("[scheduled] TG summary skip:", r && r.error);
+        if (hh !== th) return;
+        // 日锁：上海日期 YYYY-MM-DD，同日不重复发
+        const today = shanghaiBucket(Math.floor(Date.now() / 1000), false);
+        const last = await getConfigValue(env, "last_tg_summary_date");
+        if (last === today) {
+          console.log("[scheduled] TG summary already sent today:", today);
+          return;
         }
+        const r = await tgSummary(env);
+        if (!r || !r.ok) {
+          console.log("[scheduled] TG summary skip:", r && r.error);
+          return;
+        }
+        try { await setConfigValue(env, "last_tg_summary_date", today); } catch { /* ignore */ }
       } catch (e) { console.log("[scheduled] error", e && e.message); }
     })());
   },

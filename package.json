@@ -10,6 +10,7 @@
   "cloudflare": {
     "description": {
       "PASSWORD": "必填。看板登录密码，自己设一个。",
+      "SESSION_SECRET": "可选。会话签名密钥；不填则用 PASSWORD。建议单独设置。",
       "TG_ID": "可选。Telegram Chat ID。",
       "TG_TOKEN": "可选。TG 机器人 Token，VPS 用它发 TG 消息（如 123456:ABC...）。"
     }

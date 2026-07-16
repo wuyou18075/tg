@@ -1212,7 +1212,7 @@ const BUILTIN_TEMPLATES = [
   },
   {
     id: "detailed", name: "详细日报", builtin: true,
-    body: "📊 流量详细日报\n━━━━━━━━━━━━\n时间：{time}\n主机数：{host_count}（在线 {online_count}）\n\n【今日】入 {today_rx} / 出 {today_tx} / 合计 {today_total}\n【本月】入 {month_rx} / 出 {month_tx} / 合计 {month_total}\n━━━━━━━━━━━━\n各机明细：\n{machine_lines}",
+    body: "📊 流量详细日报\\n━━━━━━━━━━━━\\n时间：{time}\\n主机数：{host_count}（在线 {online_count}）\\n\\n【今日】入 {today_rx} / 出 {today_tx} / 合计 {today_total}\\n【本月】入 {month_rx} / 出 {month_tx} / 合计 {month_total}\\n━━━━━━━━━━━━\\n各机明细：\\n{machine_lines}",
     machine_line: "{status} {m_id}({hostname}) 今日 入{today_rx} 出{today_tx} | 本月 入{month_rx} 出{month_tx}",
   },
 ];
@@ -2319,26 +2319,32 @@ async function loadTgStatus(verify = false) {
   if (!el) return;
   el.className = "tg-pill s-not_configured";
   txt.textContent = "TG: 检测中";
-  try {
-    const q = verify ? "?verify=1" : "";
-    const d = await api("/api/tg-status" + q);
-    if (!d) return;
-    const s = d.state || "not_configured";
-    el.className = "tg-pill s-" + s;
-    txt.textContent = TG_LABEL[s] || s;
-    let tip = d.detail || "";
-    if (d.source) {
-      const parts = [];
-      if (d.source.token) parts.push("Token来源:" + d.source.token);
-      if (d.source.id) parts.push("ChatID来源:" + d.source.id);
-      if (parts.length) tip += (tip ? " · " : "") + parts.join(" ");
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const q = verify ? "?verify=1" : "";
+      const d = await api("/api/tg-status" + q);
+      if (!d) { lastErr = "无响应"; continue; }
+      const s = d.state || "not_configured";
+      el.className = "tg-pill s-" + s;
+      txt.textContent = TG_LABEL[s] || s;
+      let tip = d.detail || "";
+      if (d.source) {
+        const parts = [];
+        if (d.source.token) parts.push("Token来源:" + d.source.token);
+        if (d.source.id) parts.push("ChatID来源:" + d.source.id);
+        if (parts.length) tip += (tip ? " · " : "") + parts.join(" ");
+      }
+      el.title = (tip || "") + "（点击重新检测）";
+      return; // 成功则结束
+    } catch (e) {
+      lastErr = String(e && e.message ? e.message : e);
     }
-    el.title = (tip || "") + "（点击重新检测）";
-  } catch (e) {
-    el.className = "tg-pill s-invalid";
-    txt.textContent = "TG: 检测失败";
-    el.title = String(e && e.message ? e.message : e);
   }
+  // 3 次都失败
+  el.className = "tg-pill s-invalid";
+  txt.textContent = "TG: 检测失败";
+  el.title = "重试 3 次仍失败：" + lastErr;
 }
 
 async function refresh() {
@@ -2480,7 +2486,7 @@ function onTplActiveChange() {
 }
 function tplNew() {
   const id = "tpl_" + Math.random().toString(36).slice(2, 8);
-  const t = { id, name: "新模板", builtin: false, body: "📊 流量汇总\n时间：{time}\n{machine_lines}", machine_line: "{status} {m_id} 入{today_rx}/出{today_tx}" };
+  const t = { id, name: "新模板", builtin: false, body: "📊 流量汇总\\n时间：{time}\\n{machine_lines}", machine_line: "{status} {m_id} 入{today_rx}/出{today_tx}" };
   tplList.push(t); tplEditingId = id; tplActiveId = id;
   renderTplUI();
 }
@@ -2497,8 +2503,8 @@ function tplDelete() {
 async function tplReset() {
   if (!confirm("恢复为内置两个模板？自定义模板会丢失。")) return;
   tplList = [
-    { id:"simple", name:"简洁日报", builtin:true, body:"📊 流量汇总\n时间：{time}\n主机：{host_count} 台（在线 {online_count}）\n今日：入 {today_rx} / 出 {today_tx} / 合 {today_total}\n本月：入 {month_rx} / 出 {month_tx} / 合 {month_total}\n━━━━━━━━━━━━\n{machine_lines}", machine_line:"{status} {m_id}  入{today_rx}/出{today_tx}  月{month_rx}/{month_tx}" },
-    { id:"detailed", name:"详细日报", builtin:true, body:"📊 流量详细日报\n━━━━━━━━━━━━\n时间：{time}\n主机数：{host_count}（在线 {online_count}）\n\n【今日】入 {today_rx} / 出 {today_tx} / 合计 {today_total}\n【本月】入 {month_rx} / 出 {month_tx} / 合计 {month_total}\n━━━━━━━━━━━━\n各机明细：\n{machine_lines}", machine_line:"{status} {m_id}({hostname}) 今日 入{today_rx} 出{today_tx} | 本月 入{month_rx} 出{month_tx}" },
+    { id:"simple", name:"简洁日报", builtin:true, body:"📊 流量汇总\\n时间：{time}\\n主机：{host_count} 台（在线 {online_count}）\\n今日：入 {today_rx} / 出 {today_tx} / 合 {today_total}\\n本月：入 {month_rx} / 出 {month_tx} / 合 {month_total}\\n━━━━━━━━━━━━\\n{machine_lines}", machine_line:"{status} {m_id}  入{today_rx}/出{today_tx}  月{month_rx}/{month_tx}" },
+    { id:"detailed", name:"详细日报", builtin:true, body:"📊 流量详细日报\\n━━━━━━━━━━━━\\n时间：{time}\\n主机数：{host_count}（在线 {online_count}）\\n\\n【今日】入 {today_rx} / 出 {today_tx} / 合计 {today_total}\\n【本月】入 {month_rx} / 出 {month_tx} / 合计 {month_total}\\n━━━━━━━━━━━━\\n各机明细：\\n{machine_lines}", machine_line:"{status} {m_id}({hostname}) 今日 入{today_rx} 出{today_tx} | 本月 入{month_rx} 出{month_tx}" },
   ];
   tplActiveId = "simple"; tplEditingId = "simple";
   await saveTplAll("已恢复内置");

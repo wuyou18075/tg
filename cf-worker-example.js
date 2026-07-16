@@ -1322,7 +1322,7 @@ async function copyUpCmd() {
 
 async function deleteMachineRow(mid) {
   if (!mid) return;
-  if (!confirm("确定删除机器「" + mid + "」？\n将清除看板数据、历史曲线与注册密钥（不可恢复）。")) return;
+  if (!confirm("确定删除机器「" + mid + "」？将清除看板数据、历史曲线与注册密钥（不可恢复）。")) return;
   try {
     const data = await api("/api/machine?mid=" + encodeURIComponent(mid), { method: "DELETE" });
     if (!data || !data.ok) {

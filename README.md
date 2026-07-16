@@ -188,16 +188,6 @@ Actions 流程：查找 D1 `tg-cf-web` → 不存在则创建 → 写 UUID → `
 
 ## 排查
 
-### GitHub Actions 部署失败
-
-- `Authentication error` → Secret 没配/错。
-- `D1 ... not found` → 不应出现（自动建库）；若出现检查 API Token 是否含 D1 Edit。
-- `not enough permissions` → API Token 缺权限（需 Workers Scripts:Edit + D1:Edit）。
-
-### 获取流量 401
-
-`access_token` 两边不一致。看板「更新注册」复制完整命令在 VPS 重装；或 VPS 执行 `--rotate-token` 下次上报自动同步。
-
 ### 回调服务
 
 ```bash

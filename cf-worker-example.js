@@ -242,6 +242,9 @@ async function ensureSchema(env) {
         ip TEXT, ua TEXT, success INTEGER, reason TEXT
       )`).run();
   } catch {}
+  try {
+    await env.DB.prepare(`ALTER TABLE machines ADD COLUMN offline_notified INTEGER DEFAULT 0`).run();
+  } catch {}
 }
 
 /** 上报间隔 ≤ 此秒数视为连续在线，计入累积在线时长（与看板「在线」2h 一致） */
@@ -319,6 +322,7 @@ async function listMachines(env) {
       updated_at: r.updated_at,
       callback_url: r.callback_url || "",
       in_tg_report: r.in_tg_report === 0 ? false : true,
+      offline_notified: !!r.offline_notified,
       online_sec: base,
       online_sec_live: base + liveExtra,
     };
@@ -1331,6 +1335,34 @@ async function getLoginLogs(env, limit = 100) {
   }));
 }
 
+/** 离线检测：离线且未通知 → 发 TG + 标记；重新在线 → 清标记 */
+async function checkOffline(env) {
+  if (!env.DB) return;
+  const machines = await listMachines(env);
+  const now = Math.floor(Date.now() / 1000);
+  for (const m of machines) {
+    const isOn = !!(m.ts && (now - m.ts) < 7200);
+    const notified = !!m.offline_notified;
+    if (!isOn && !notified) {
+      const last = m.ts
+        ? new Date(m.ts * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })
+        : "无";
+      try {
+        await sendTgMessage(env,
+          "⚠️ 机器离线\n" + (m.machine_id || "?") +
+          "\n最后上报：" + last + "\n（已记录，恢复在线前不再重复通知）");
+      } catch { /* ignore */ }
+      try {
+        await env.DB.prepare(`UPDATE machines SET offline_notified = 1 WHERE machine_id = ?`).bind(m.machine_id).run();
+      } catch { /* ignore */ }
+    } else if (isOn && notified) {
+      try {
+        await env.DB.prepare(`UPDATE machines SET offline_notified = 0 WHERE machine_id = ?`).bind(m.machine_id).run();
+      } catch { /* ignore */ }
+    }
+  }
+}
+
 // ─── TG 汇总 ───
 
 async function tgSummary(env) {
@@ -1593,6 +1625,14 @@ textarea:focus{border-color:#3b82f6}
       <button class="primary" onclick="openAddVps()">＋ 添加 VPS</button>
       <button onclick="refresh()">刷新</button>
       <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口立即上报（需公网；无 poll）">获取流量</button>
+      <label class="chk"><input type="checkbox" id="filterOnline" onchange="renderTable()"> 只看在线</label>
+      <select id="sortBy" onchange="renderTable()" title="排序">
+        <option value="last">默认（最后上报）</option>
+        <option value="today_desc">今日流量 ↓</option>
+        <option value="today_asc">今日流量 ↑</option>
+        <option value="month_desc">本月流量 ↓</option>
+        <option value="uptime_desc">累积在线 ↓</option>
+      </select>
       <span id="tgStatus" class="tg-pill s-not_configured" title="点击重新检测" onclick="loadTgStatus(true)">
         <span class="dot"></span><span id="tgStatusText">TG: 检测中</span>
       </span>
@@ -1916,21 +1956,39 @@ function renderSummary() {
   ].join("");
 }
 
+function machineView() {
+  let arr = machines.slice();
+  const fo = document.getElementById("filterOnline");
+  if (fo && fo.checked) arr = arr.filter(m => online(m.ts));
+  const sel = document.getElementById("sortBy");
+  const by = sel ? sel.value : "last";
+  const tot = (m) => ((m.today?.rx || 0) + (m.today?.tx || 0));
+  const mtot = (m) => ((m.month?.rx || 0) + (m.month?.tx || 0));
+  const up = (m) => (m.online_sec_live != null ? m.online_sec_live : (Number(m.online_sec) || 0));
+  if (by === "today_desc") arr.sort((a,b) => tot(b) - tot(a));
+  else if (by === "today_asc") arr.sort((a,b) => tot(a) - tot(b));
+  else if (by === "month_desc") arr.sort((a,b) => mtot(b) - mtot(a));
+  else if (by === "uptime_desc") arr.sort((a,b) => up(b) - up(a));
+  else arr.sort((a,b) => (b.ts||0) - (a.ts||0));
+  return arr;
+}
+
 function renderTable() {
   const tb = document.getElementById("tbody");
   tb.replaceChildren();
   const frag = document.createDocumentFragment && false; // placeholder
   const showCheck = !!document.getElementById("checkAll");
-  if (!machines.length) {
+  const view = machineView();
+  if (!view.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 9;
-    td.textContent = "暂无数据";
+    td.colSpan = 10;
+    td.textContent = machines.length ? "当前筛选下无数据" : "暂无数据";
     tr.appendChild(td);
     tb.appendChild(tr);
     return;
   }
-  for (const m of machines) {
+  for (const m of view) {
     const tr = document.createElement("tr");
     if (m.machine_id === selected) tr.classList.add("active");
     tr.dataset.mid = m.machine_id || "";
@@ -2022,7 +2080,7 @@ function toggleSelect(mid, checked) {
 }
 function toggleAll(checked) {
   selectedMids.clear();
-  if (checked) for (const m of machines) selectedMids.add(m.machine_id);
+  if (checked) for (const m of machineView()) selectedMids.add(m.machine_id);
   document.querySelectorAll("#tbody .row-check").forEach(cb => {
     cb.checked = selectedMids.has(cb.dataset.mid);
   });
@@ -3198,42 +3256,4 @@ export default {
         const text = renderTemplate(b && b.template, machines, total);
         return json({ ok: true, text });
       } catch (e) {
-        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
-      }
-    }
-
-    // POST /api/tg-summary — 发送 TG 汇总
-    if (req.method === "POST" && url.pathname === "/api/tg-summary") {
-      const result = await tgSummary(env);
-      if (!result.ok) return json(result, 400);
-      return json(result);
-    }
-
-    // GET / — 看板
-    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return html(dashboardPage());
-    }
-
-    return json({ ok: false, error: "not found" }, 404);
-  },
-
-  /** 定时触发：每 15 分钟检查一次，到设置的 TG 汇报时间则发送 */
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil((async () => {
-      try {
-        if (!env.DB) return;
-        const t_time = (await getConfigValue(env, "t_time")) || "20:00:00";
-        const m = /^(\d{2}):(\d{2})/.exec(t_time);
-        if (!m) return;
-        const th = m[1], tm = m[2];
-        const sh = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-        const hh = String(sh.getHours()).padStart(2, "0");
-        const mm = String(sh.getMinutes()).padStart(2, "0");
-        if (hh === th && mm === tm) {
-          const r = await tgSummary(env);
-          if (!r || !r.ok) console.log("[scheduled] TG summary skip:", r && r.error);
-        }
-      } catch (e) { console.log("[scheduled] error", e && e.message); }
-    })());
-  },
-};
+        return json({ ok: false, error: String(e && e.message ? e.message : e

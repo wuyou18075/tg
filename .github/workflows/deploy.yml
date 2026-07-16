@@ -1,5 +1,9 @@
 name: Deploy to Cloudflare Workers
 
+# 只部署代码 + D1 绑定。
+# 环境变量（PASSWORD / TG_*）一律在 Cloudflare Dashboard → 加密变量 手动维护，
+# 本工作流不读写、不覆盖、不删除。CF Workers Builds 同理。
+
 on:
   push:
     branches: [main]
@@ -12,38 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy Worker + sync secrets
+      - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy ./cf-worker-example.js --name cf-tg-web --compatibility-date 2024-11-01
           wranglerVersion: "3.109.0"
-          # 必填：看板登录密码 → Worker 加密变量 PASSWORD
-          secrets: |
-            PASSWORD
-          # 可选：有值才写入，避免空 Secret 覆盖线上已有 TG 配置
-          postCommands: |
-            put_secret() {
-              name="$1"
-              val="$2"
-              if [ -n "$val" ]; then
-                echo "→ 同步加密变量 $name"
-                printf '%s' "$val" | wrangler secret put "$name" --name cf-tg-web
-              else
-                echo "· 跳过 $name（GitHub Secret 未配置或为空）"
-              fi
-            }
-            put_secret TG_BOT_TOKEN "${TG_BOT_TOKEN:-}"
-            put_secret TG_ID "${TG_ID:-}"
-            put_secret TG_TOKEN "${TG_TOKEN:-}"
-          preCommands: |
-            if [ -z "${PASSWORD:-}" ]; then
-              echo "::error::请在仓库 Settings → Secrets and variables → Actions 中配置 Secret: PASSWORD（看板登录密码，必填）"
-              exit 1
-            fi
-        env:
-          PASSWORD: ${{ secrets.PASSWORD }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_ID: ${{ secrets.TG_ID }}
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}

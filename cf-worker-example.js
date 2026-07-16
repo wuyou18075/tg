@@ -235,6 +235,13 @@ async function ensureSchema(env) {
   try {
     await env.DB.prepare(`ALTER TABLE machines ADD COLUMN in_tg_report INTEGER DEFAULT 1`).run();
   } catch {}
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS login_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
+        ip TEXT, ua TEXT, success INTEGER, reason TEXT
+      )`).run();
+  } catch {}
 }
 
 /** 上报间隔 ≤ 此秒数视为连续在线，计入累积在线时长（与看板「在线」2h 一致） */
@@ -1283,6 +1290,47 @@ function renderTemplate(tpl, machines, totals) {
     .split("{machine_lines}").join(lines.join("\n") + more);
 }
 
+/** 发送单条 TG 消息（用于登录通知等），未配置返回 not_configured */
+async function sendTgMessage(env, text) {
+  const cfg = await getConfig(env);
+  const token = cfg.t_token || "";
+  const id = cfg.t_id || "";
+  if (!token || !id) return { ok: false, reason: "not_configured" };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ chat_id: id, text, disable_web_page_preview: "true" }),
+    });
+    if (!r.ok) return { ok: false, reason: "api_error" };
+    return { ok: true };
+  } catch { return { ok: false, reason: "fetch_failed" }; }
+}
+
+async function addLoginLog(env, rec) {
+  if (!env.DB) return;
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      `INSERT INTO login_logs (ts, ip, ua, success, reason) VALUES (?, ?, ?, ?, ?)`
+    ).bind(now, String(rec.ip || "-").slice(0, 64), String(rec.ua || "-").slice(0, 300),
+      rec.success ? 1 : 0, String(rec.reason || "").slice(0, 200)).run();
+    await env.DB.prepare(`DELETE FROM login_logs WHERE ts < ?`).bind(now - 90 * 86400).run();
+  } catch { /* ignore */ }
+}
+
+async function getLoginLogs(env, limit = 100) {
+  if (!env.DB) return [];
+  const n = Math.min(500, Math.max(10, Number(limit) || 100));
+  const { results } = await env.DB.prepare(
+    `SELECT id, ts, ip, ua, success, reason FROM login_logs ORDER BY id DESC LIMIT ?`
+  ).bind(n).all();
+  return (results || []).map(r => ({
+    id: r.id, ts: r.ts, ip: r.ip || "-", ua: r.ua || "-",
+    success: !!r.success, reason: r.reason || "",
+  }));
+}
+
 // ─── TG 汇总 ───
 
 async function tgSummary(env) {
@@ -1529,6 +1577,7 @@ textarea:focus{border-color:#3b82f6}
     <div class="nav">
       <a id="tabDash" class="active" onclick="switchTab('dash')">看板</a>
       <a id="tabSet" onclick="switchTab('settings')">设置</a>
+      <a id="tabLogs" onclick="switchTab('logs')">日志</a>
     </div>
   </div>
   <div class="actions">
@@ -1657,6 +1706,25 @@ textarea:focus{border-color:#3b82f6}
         <summary style="cursor:pointer;color:#9fb3d9;font-size:12px">预览结果（点开）</summary>
         <pre class="tpl-preview" id="tplPreview" style="margin-top:8px">（点「预览」用当前数据渲染）</pre>
       </details>
+    </div>
+  </div>
+
+  <!-- 登录日志页 -->
+  <div id="pageLogs" class="page">
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <h2 style="margin:0">登录日志</h2>
+        <button type="button" onclick="loadLoginLogs()">刷新</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:8px">最近登录记录（保留 90 天）。登录成功且已配置 TG 时会发通知。</p>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr>
+            <th>时间</th><th>结果</th><th>IP</th><th>原因</th><th>设备</th>
+          </tr></thead>
+          <tbody id="loginLogsBody"><tr><td colspan="5">加载中…</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </main>
@@ -1810,6 +1878,7 @@ function switchTab(name) {
   document.getElementById("tab" + pname).classList.add("active");
   if (name === "settings") { loadConfig(); loadTemplates(); }
   if (name === "dash") refresh();
+  if (name === "logs") loadLoginLogs();
 }
 
 async function api(path, opts) {
@@ -2272,6 +2341,45 @@ async function loadConfig() {
   if (hi) hi.textContent = data.t_id_from_env
     ? "✓ 已使用环境变量 TG_ID（页面留空即可）"
     : "页面未填时使用环境变量 TG_ID";
+}
+
+async function loadLoginLogs() {
+  const tb = document.getElementById("loginLogsBody");
+  if (!tb) return;
+  try {
+    const data = await api("/api/login-logs?limit=100");
+    if (!data || !data.ok) { tb.innerHTML = '<tr><td colspan="5">加载失败</td></tr>'; return; }
+    const logs = data.logs || [];
+    if (!logs.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#8aa0c6">暂无登录记录</td></tr>'; return; }
+    tb.replaceChildren();
+    for (const lg of logs) {
+      const tr = document.createElement("tr");
+      tr.style.cursor = "default";
+      const cells = [
+        fmtTime(lg.ts),
+        lg.success ? "✓ 成功" : "✗ 失败",
+        lg.ip,
+        lg.reason || "",
+        lg.ua,
+      ];
+      for (let i = 0; i < cells.length; i++) {
+        const td = document.createElement("td");
+        td.textContent = cells[i];
+        if (i === 1) {
+          const b = document.createElement("span");
+          b.className = "badge " + (lg.success ? "" : "off");
+          b.textContent = cells[i];
+          td.replaceChild(b, td.firstChild);
+        }
+        td.title = cells[i];
+        if (i === 4) td.style.fontSize = "11px";
+        tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    }
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="5">加载失败</td></tr>';
+  }
 }
 
 // ─── TG 模板 ───
@@ -2877,10 +2985,24 @@ export default {
       if (req.method === "POST") {
         const form = await req.formData();
         const pw = String(form.get("password") || "");
+        const ip = (req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "-").toString().split(",")[0].trim();
+        const ua = req.headers.get("user-agent") || "-";
         if (!env.PASSWORD) {
+          await addLoginLog(env, { ip, ua, success: false, reason: "PASSWORD 未配置" });
           return html(loginPage("未配置 PASSWORD 加密变量，无法登录。请先到 Cloudflare Dashboard 添加。", { noPassword: true }), 401);
         }
-        if (pw !== env.PASSWORD) return html(loginPage("密码错误"), 401);
+        const ok = (pw === env.PASSWORD);
+        if (!ok) {
+          await addLoginLog(env, { ip, ua, success: false, reason: "密码错误" });
+          return html(loginPage("密码错误"), 401);
+        }
+        await addLoginLog(env, { ip, ua, success: true, reason: "登录成功" });
+        // TG 通知（已配置则发）
+        try {
+          const time = new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+          await sendTgMessage(env,
+            "🔐 看板登录成功\n时间：" + time + "\nIP：" + ip + "\n设备：" + String(ua).slice(0, 120));
+        } catch { /* ignore */ }
         const token = await makeSessionToken(env);
         return new Response(null, { status: 302, headers: { Location: "/", "Set-Cookie": sessionCookie(token) } });
       }
@@ -2918,6 +3040,13 @@ export default {
       } catch (e) {
         return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
       }
+    }
+
+    // GET /api/login-logs — 登录日志
+    if (req.method === "GET" && url.pathname === "/api/login-logs") {
+      if (!env.DB) return json({ ok: true, logs: [] });
+      const limit = Number(url.searchParams.get("limit") || 100);
+      return json({ ok: true, logs: await getLoginLogs(env, limit) });
     }
 
     // GET /api/machines

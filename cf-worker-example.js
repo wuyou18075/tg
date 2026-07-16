@@ -34,13 +34,21 @@ function missingDbError(env) {
 const json = (data, status = 200, extra = {}) =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", ...extra },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "content-language": "zh-CN",
+      ...extra,
+    },
   });
 
 const html = (body, status = 200, extra = {}) =>
   new Response(body, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8", ...extra },
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-language": "zh-CN",
+      ...extra,
+    },
   });
 
 function gb(n) {
@@ -703,11 +711,12 @@ ${lines}${more}`;
 
 function loginPage(err = "") {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>登录 · 流量看板</title>
 <style>
 :root{color-scheme:dark}
-body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:#0b1220;color:#e8eefc}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
 .card{width:min(360px,92vw);background:#121a2b;border:1px solid #243049;border-radius:14px;padding:28px 24px;box-shadow:0 12px 40px #0006}
 h1{font-size:18px;margin:0 0 6px}
 p{margin:0 0 18px;color:#8aa0c6;font-size:13px}
@@ -731,13 +740,14 @@ button{width:100%;padding:10px 12px;border:0;border-radius:8px;background:#3b82f
 
 function dashboardPage() {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>流量看板</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,sans-serif;background:#0b1220;color:#e8eefc}
+body{margin:0;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;background:#0b1220;color:#e8eefc}
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #1e2a42;background:#0e1628}
 header h1{font-size:18px;margin:0}
 .nav{display:flex;gap:4px;margin-left:16px}
@@ -994,38 +1004,75 @@ function renderSummary() {
 
 function renderTable() {
   const tb = document.getElementById("tbody");
-  if (!machines.length) { tb.innerHTML = '<tr><td colspan="8">暂无数据</td></tr>'; return; }
-  tb.innerHTML = machines.map(m => {
-    const active = m.machine_id === selected ? "active" : "";
-    const st = online(m.ts) ? '<span class="badge">在线</span>' : '<span class="badge off">离线</span>';
-    const midAttr = esc(m.machine_id||"");
-    const ops = '<td class="ops">' +
-      '<button type="button" class="sm primary" data-act="update" data-mid="' + midAttr + '">更新注册</button>' +
-      '<button type="button" class="sm danger" data-act="del" data-mid="' + midAttr + '">删除</button>' +
-      "</td>";
-    return '<tr class="' + active + '" data-mid="' + midAttr + '">' +
-      "<td>" + esc(m.machine_id||"") + '</td><td>' + esc(m.hostname||"") + '</td><td>' + esc(m.interface||"") + "</td>" +
-      "<td>" + gb(m.today?.rx) + " / " + gb(m.today?.tx) + "</td>" +
-      "<td>" + gb(m.month?.rx) + " / " + gb(m.month?.tx) + "</td>" +
-      "<td>" + fmtTime(m.ts) + "</td><td>" + st + "</td>" + ops + "</tr>";
-  }).join("");
-  tb.querySelectorAll("tr[data-mid]").forEach(tr => {
+  tb.replaceChildren();
+  if (!machines.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 8;
+    td.textContent = "暂无数据";
+    tr.appendChild(td);
+    tb.appendChild(tr);
+    return;
+  }
+  for (const m of machines) {
+    const tr = document.createElement("tr");
+    if (m.machine_id === selected) tr.classList.add("active");
+    tr.dataset.mid = m.machine_id || "";
+
+    const texts = [
+      m.machine_id || "",
+      m.hostname || "",
+      m.interface || "",
+      gb(m.today && m.today.rx) + " / " + gb(m.today && m.today.tx),
+      gb(m.month && m.month.rx) + " / " + gb(m.month && m.month.tx),
+      fmtTime(m.ts),
+    ];
+    for (const text of texts) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+
+    const tdSt = document.createElement("td");
+    const badge = document.createElement("span");
+    const isOn = online(m.ts);
+    badge.className = isOn ? "badge" : "badge off";
+    badge.textContent = isOn ? "在线" : "离线";
+    tdSt.appendChild(badge);
+    tr.appendChild(tdSt);
+
+    const tdOps = document.createElement("td");
+    tdOps.className = "ops";
+    const btnUp = document.createElement("button");
+    btnUp.type = "button";
+    btnUp.className = "sm primary";
+    btnUp.textContent = "更新注册";
+    btnUp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openUpdateVps(m.machine_id);
+    });
+    const btnDel = document.createElement("button");
+    btnDel.type = "button";
+    btnDel.className = "sm danger";
+    btnDel.textContent = "删除";
+    btnDel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteMachineRow(m.machine_id);
+    });
+    tdOps.appendChild(btnUp);
+    tdOps.appendChild(btnDel);
+    tr.appendChild(tdOps);
+
     tr.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
-      selected = tr.dataset.mid;
+      selected = m.machine_id;
       renderTable();
       loadHistory();
     });
-  });
-  tb.querySelectorAll("button[data-act]").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const mid = btn.dataset.mid;
-      if (btn.dataset.act === "update") openUpdateVps(mid);
-      if (btn.dataset.act === "del") deleteMachineRow(mid);
-    });
-  });
+    tb.appendChild(tr);
+  }
 }
+
 
 async function loadHistory() {
   if (!selected) return;

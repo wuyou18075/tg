@@ -2,9 +2,70 @@
 
 [![部署到 Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wuyou18075/tg)
 
+本项目支持两种独立用法，按需选择：
+
+| 方案 | 适用 | 需要 Cloudflare | 需要看板 | 消息怎么发 |
+|------|------|----------------|----------|-----------|
+| **方案一：仅 TG 日报** | 只想在 TG 收每台 VPS 流量日报 | ❌ 不需要 | ❌ 不需要 | VPS 直接发 TG |
+| **方案二：CF 看板** | 要 Web 看板、多机集中管理、历史曲线 | ✅ 需要 | ✅ 需要 | 看板统一发 TG 汇总 |
+
+> 两种方案的 TG 凭证是同一个 Bot（`t_token` / `TG_TOKEN` 都是 BotFather 给的 Bot Token）。方案一 VPS 独立运行，不依赖任何 Web 服务。
+
 ---
 
-## 一键部署（新用户推荐）
+## 方案一：仅 TG 日报（VPS 独立使用，无需 Cloudflare）
+
+每台 VPS 自己定时把 vnStat 流量发到你的 Telegram，不需要 Worker / D1 / 看板。适合只想要日报、不想搭 Web 的场景。
+
+### 参数说明
+
+在 VPS（Debian 13）上用环境变量传参：
+
+| 参数 | 含义 | 格式 / 示例 | 必填 |
+|------|------|------------|------|
+| `t_token` | TG 机器人 Token | `123456789:ABCdef...`（BotFather 创建机器人后获得） | ✅ |
+| `t_id` | 聊天/群 ID | `-1001234567890`（群为负数，个人为正数） | ✅ |
+| `t_time` | 每天发送时间 | `HH:MM:SS`，默认 `20:00:00` | ❌ |
+
+获取 Token / ID：
+1. 在 Telegram 找 [@BotFather](https://t.me/BotFather) → `/newbot` → 拿到 `t_token`
+2. 把机器人拉进群（或私聊它发一条消息），再访问 `https://api.telegram.org/bot<你的t_token>/getUpdates` → 从返回里拿 `chat.id` 作为 `t_id`
+
+### 一键安装
+
+```bash
+t_token='123456789:ABCdef...' t_id='-1001234567890' \
+  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
+```
+
+自定义发送时间（例如每天 09:30）：
+
+```bash
+t_token='...' t_id='...' t_time='09:30:00' \
+  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
+```
+
+脚本会自动：安装 vnStat → 配置默认网卡 → 注册 systemd 定时任务 → 立即发一条测试消息。
+
+### 运维命令
+
+```bash
+systemctl status traffic-telegram-report.timer   # 定时器状态
+systemctl start  traffic-telegram-report.service # 立即发一次
+journalctl -u traffic-telegram-report.service    # 看日志
+```
+
+### 卸载
+
+```bash
+bash /usr/local/sbin/traffic-telegram-report --uninstall 2>/dev/null || bash sum.sh --uninstall
+```
+
+> 方案一**不涉及** `access_token`、`cf_url`、Cloudflare——VPS 只和你自己的 Telegram 机器人通信。
+
+---
+
+## 方案二·A：CF 看板一键部署（新用户推荐）
 
 点下方按钮，Cloudflare 会打开部署表单：
 
@@ -13,42 +74,14 @@
 表单里会让你填：
 
 - `PASSWORD`：看板登录密码（必填，自己设）
-- `TG_BOT_TOKEN` / `TG_ID`：可选，用于 TG 汇总
+- `TG_TOKEN` / `TG_ID`：可选，TG 机器人 Token 与 Chat ID（用于看板发 TG 汇总）
 - D1 数据库：CF 自动创建并绑定，无需手动建
 
-填完 Deploy 即可。所有变量自动创建为**加密变量**，后续部署不会删。部署完打开 Worker 地址用 `PASSWORD` 登录。
+填完 Deploy 即可。所有变量自动创建为**加密变量**，后续部署不会删。部署完打开 Worker 地址用 `PASSWORD` 登录，再到看板「添加 VPS」生成每台机器的安装命令（含独立 `access_token`）。
 
-> 已部署用户日常更新代码用 git push（见下方完整方案），不必重复一键部署。
+> 已部署用户日常更新代码用 git push（见方案二·B），不必重复一键部署。
 
----
-
-## 快速入门：仅 Telegram 日报（无需 Cloudflare）
-
-只想每天在 Telegram 收 VPS 流量日报、不需要 Web 看板时，在 Debian 13 上执行：
-
-```bash
-t_token='123456:ABC...' t_id='-1001234567890' \
-  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
-```
-
-自定义发送时间：
-
-```bash
-t_token='...' t_id='...' t_time='09:30:00' \
-  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
-```
-
-运维：
-
-```bash
-systemctl status traffic-telegram-report.timer
-systemctl start traffic-telegram-report.service
-journalctl -u traffic-telegram-report.service
-```
-
----
-
-## 完整方案：Telegram + Cloudflare 看板
+## 方案二·B：CF 看板完整部署（手动/CI）
 
 需要 Web 看板、多机集中管理、历史曲线时，按下面步骤部署。
 

@@ -232,6 +232,9 @@ async function ensureSchema(env) {
   try {
     await env.DB.prepare(`ALTER TABLE vps_tokens ADD COLUMN pending_token TEXT`).run();
   } catch {}
+  try {
+    await env.DB.prepare(`ALTER TABLE machines ADD COLUMN in_tg_report INTEGER DEFAULT 1`).run();
+  } catch {}
 }
 
 /** 上报间隔 ≤ 此秒数视为连续在线，计入累积在线时长（与看板「在线」2h 一致） */
@@ -308,6 +311,7 @@ async function listMachines(env) {
       month: { rx: r.month_rx || 0, tx: r.month_tx || 0, total: (r.month_rx || 0) + (r.month_tx || 0) },
       updated_at: r.updated_at,
       callback_url: r.callback_url || "",
+      in_tg_report: r.in_tg_report === 0 ? false : true,
       online_sec: base,
       online_sec_live: base + liveExtra,
     };
@@ -607,6 +611,26 @@ async function deleteMachine(env, mid) {
     env.DB.prepare(`DELETE FROM machines WHERE machine_id = ?`).bind(mid),
     env.DB.prepare(`DELETE FROM vps_tokens WHERE machine_id = ?`).bind(mid),
   ]);
+}
+
+/** 批量操作：delete / include_tg / exclude_tg */
+async function machineBatch(env, ids, action) {
+  if (!env.DB) throw new Error(missingDbError(env));
+  const mids = (ids || []).map(x => String(x || "").trim()).filter(Boolean);
+  if (!mids.length) return { ok: false, error: "未选择机器" };
+  if (!["delete", "include_tg", "exclude_tg"].includes(action)) {
+    return { ok: false, error: "未知操作" };
+  }
+  const ph = mids.map(() => "?").join(",");
+  if (action === "delete") {
+    for (const mid of mids) { try { await deleteMachine(env, mid); } catch {} }
+  } else {
+    const val = action === "include_tg" ? 1 : 0;
+    await env.DB.prepare(
+      `UPDATE machines SET in_tg_report = ? WHERE machine_id IN (${ph})`
+    ).bind(val, ...mids).run();
+  }
+  return { ok: true, action, affected: mids.length };
 }
 
 function buildInstallCommand(mid, accessToken, cf_url, cf_time, cb_port) {
@@ -1181,9 +1205,10 @@ async function tgSummary(env) {
     };
   }
 
-  const machines = await listMachines(env);
+  const allMachines = await listMachines(env);
+  const machines = allMachines.filter(m => m.in_tg_report !== false);
   if (!machines.length) {
-    return { ok: false, error: "暂无机器数据" };
+    return { ok: false, error: "暂无参与 TG 汇报的机器（在列表勾选后再试）" };
   }
 
   // 汇总统计
@@ -1210,7 +1235,7 @@ async function tgSummary(env) {
 
   const msg = `📊 流量汇总
 ━━━━━━━━━━━━━━━━━━━━
-主机数：${machines.length} 台（在线 ${total.online}）
+主机数：${machines.length} 台（参与 TG，在线 ${total.online}）
 时间：${dateStr}
 
 今日总计：入 ${gb(total.today_rx)} / 出 ${gb(total.today_tx)} / 合计 ${gb(total.today_rx + total.today_tx)}
@@ -1402,6 +1427,11 @@ td.ops button{margin-right:4px}
 .tg-pill.s-not_configured{color:#8aa0c6;border-color:#33415f;background:#0b1220}
 .tg-pill.s-not_configured .dot{background:#8aa0c6}
 .tg-tip{font-size:11px;color:#8aa0c6;margin-left:4px}
+.batch-bar{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:#0e1628;border:1px solid #243049;border-radius:8px;font-size:12px}
+.batch-bar.show{display:flex}
+.batch-bar button{padding:5px 10px;font-size:12px}
+.row-check{width:18px;height:18px;cursor:pointer;accent-color:#3b82f6}
+
 
 
 
@@ -1451,13 +1481,22 @@ td.ops button{margin-right:4px}
     </div>
     <div class="panel">
       <h2>机器列表</h2>
+      <div class="batch-bar" id="batchBar">
+        <span>已选 <b id="batchCount">0</b> 台</span>
+        <button class="warn" onclick="batchAction('include_tg')">加入 TG 汇报</button>
+        <button onclick="batchAction('exclude_tg')">移出 TG 汇报</button>
+        <button class="danger" onclick="batchAction('delete')">批量删除</button>
+        <span style="flex:1"></span>
+        <button onclick="clearSelection()">取消选择</button>
+      </div>
       <div style="overflow:auto">
         <table>
           <thead><tr>
+            <th style="width:36px"><input type="checkbox" id="checkAll" class="row-check" onchange="toggleAll(this.checked)"></th>
             <th>机器</th><th>主机</th><th>网卡</th>
             <th>今日入/出</th><th>本月入/出</th><th>累积在线</th><th>最后上报</th><th>状态</th><th>操作</th>
           </tr></thead>
-          <tbody id="tbody"><tr><td colspan="9">加载中…</td></tr></tbody>
+          <tbody id="tbody"><tr><td colspan="10">加载中…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1629,6 +1668,7 @@ const esc = (s) => String(s ?? "")
 let machines = [];
 let selected = null;
 let chart;
+const selectedMids = new Set();
 let histChart;
 let chartMode = "day";       // day | month  （总览）
 let histMode = "day";        // day | month  （单机弹窗）
@@ -1684,6 +1724,8 @@ function renderSummary() {
 function renderTable() {
   const tb = document.getElementById("tbody");
   tb.replaceChildren();
+  const frag = document.createDocumentFragment && false; // placeholder
+  const showCheck = !!document.getElementById("checkAll");
   if (!machines.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
@@ -1697,6 +1739,19 @@ function renderTable() {
     const tr = document.createElement("tr");
     if (m.machine_id === selected) tr.classList.add("active");
     tr.dataset.mid = m.machine_id || "";
+
+    const tdCheck = document.createElement("td");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "row-check";
+    cb.dataset.mid = m.machine_id || "";
+    cb.checked = selectedMids.has(m.machine_id);
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
+      toggleSelect(m.machine_id, cb.checked);
+    });
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
 
     const uptime = (m.online_sec_live != null)
       ? m.online_sec_live
@@ -1762,6 +1817,56 @@ function renderTable() {
       renderTable();
     });
     tb.appendChild(tr);
+  }
+  updateBatchBar();
+}
+
+function toggleSelect(mid, checked) {
+  if (checked) selectedMids.add(mid); else selectedMids.delete(mid);
+  updateBatchBar();
+}
+function toggleAll(checked) {
+  selectedMids.clear();
+  if (checked) for (const m of machines) selectedMids.add(m.machine_id);
+  document.querySelectorAll("#tbody .row-check").forEach(cb => {
+    cb.checked = selectedMids.has(cb.dataset.mid);
+  });
+  updateBatchBar();
+}
+function clearSelection() {
+  selectedMids.clear();
+  document.querySelectorAll("#tbody .row-check").forEach(cb => cb.checked = false);
+  const ca = document.getElementById("checkAll");
+  if (ca) ca.checked = false;
+  updateBatchBar();
+}
+function updateBatchBar() {
+  const bar = document.getElementById("batchBar");
+  const cnt = document.getElementById("batchCount");
+  const n = selectedMids.size;
+  if (cnt) cnt.textContent = String(n);
+  if (bar) bar.classList.toggle("show", n > 0);
+}
+async function batchAction(action) {
+  const ids = [...selectedMids];
+  if (!ids.length) { toast("未选择机器"); return; }
+  const label = action === "delete" ? "删除" : (action === "include_tg" ? "加入 TG 汇报" : "移出 TG 汇报");
+  if (action === "delete") {
+    if (!confirm("确认批量" + label + " " + ids.length + " 台机器？删除不可恢复。")) return;
+  } else if (action === "exclude_tg") {
+    if (!confirm("确认将 " + ids.length + " 台机器移出 TG 汇报？")) return;
+  }
+  try {
+    const data = await api("/api/machine-batch", {
+      method: "POST",
+      body: JSON.stringify({ ids, action }),
+    });
+    if (!data || !data.ok) { toast(data?.error || "批量操作失败"); return; }
+    toast(label + " " + (data.affected || ids.length) + " 台完成");
+    clearSelection();
+    await refresh();
+  } catch (e) {
+    toast("批量操作失败：" + (e && e.message ? e.message : String(e)));
   }
 }
 
@@ -2661,6 +2766,19 @@ export default {
         return json(result);
       } catch (e) {
         return json({ ok: false, error: "生成异常：" + (e && e.message ? e.message : String(e)) }, 500);
+      }
+    }
+
+    // POST /api/machine-batch — 批量删除/加入TG/移出TG
+    if (req.method === "POST" && url.pathname === "/api/machine-batch") {
+      try {
+        if (!env.DB) return json({ ok: false, error: missingDbError(env) }, 500);
+        const b = await req.json();
+        const r = await machineBatch(env, b && b.ids, b && b.action);
+        if (!r.ok) return json(r, 400);
+        return json(r);
+      } catch (e) {
+        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
       }
     }
 

@@ -150,8 +150,9 @@ cf_time='0 * * * *' \
 - 表格：今日/本月入站出站
 - 点击行切换曲线（24h / 3d / 7d / 30d）
 - 2 小时内有上报标为在线
-- **获取流量**：通知所有 VPS 立即上报（agent 约 1 分钟内响应）
+- **获取流量**：Worker 用注册密钥 HMAC 签名，推送到各 VPS 公网回调口 `/force-report`，秒级触发上报
 - 安装/开机后会自动立即上报一次，无需等 cron
+- 可选 `cb_url` / `cb_port`（默认 19840）；需放行入站端口
 
 ---
 
@@ -188,14 +189,14 @@ cf_time='0 * * * *' \
 ```bash
 systemctl status traffic-telegram-report.timer         # TG 定时器
 systemctl status traffic-telegram-report-cf.timer      # CF 定时器
-systemctl status traffic-telegram-report-poll.timer    # 看板强制上报轮询
+systemctl status traffic-telegram-report-cb.service    # 回调监听（获取流量推送）
 
 systemctl start traffic-telegram-report.service        # 立即发 TG
 systemctl start traffic-telegram-report-cf.service     # 立即 CF 上报
 
 journalctl -u traffic-telegram-report.service
 journalctl -u traffic-telegram-report-cf.service
-journalctl -u traffic-telegram-report-poll.service
+journalctl -u traffic-telegram-report-cb.service
 
 # 卸载（保留 vnStat）
 bash /path/to/sum.sh --uninstall

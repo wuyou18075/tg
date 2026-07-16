@@ -62,6 +62,42 @@ function isValidMachineId(mid) {
   return /^[\u4e00-\u9fffA-Za-z0-9._:-]{1,64}$/.test(id);
 }
 
+function isValidCallbackUrl(u) {
+  if (!u || typeof u !== "string") return false;
+  if (u.length < 12 || u.length > 256) return false;
+  try {
+    const x = new URL(u);
+    if (x.protocol !== "http:" && x.protocol !== "https:") return false;
+    if (!x.pathname || x.pathname === "/") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function toHex(buf) {
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacSha256Hex(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return toHex(sig);
+}
+
+function randomNonce(len = 16) {
+  const buf = new Uint8Array(len);
+  crypto.getRandomValues(buf);
+  return toHex(buf);
+}
+
 function bashSingleQuote(s) {
   return String(s).replace(/'/g, `'\''`);
 }
@@ -140,6 +176,10 @@ async function ensureSchema(env) {
         machine_id TEXT PRIMARY KEY, token TEXT NOT NULL, created_at INTEGER
       )`),
   ]);
+  // 兼容已有库：补 callback_url 列
+  try {
+    await env.DB.prepare(`ALTER TABLE machines ADD COLUMN callback_url TEXT`).run();
+  } catch {}
 }
 
 // ─── 数据操作 ───
@@ -150,17 +190,20 @@ async function upsertReport(env, rec) {
   const today = rec.today || {};
   const month = rec.month || {};
   const now = Math.floor(Date.now() / 1000);
+  const cbRaw = rec.callback_url != null ? String(rec.callback_url).trim() : "";
+  const callback_url = isValidCallbackUrl(cbRaw) ? cbRaw : null;
 
   await env.DB.prepare(
-    `INSERT INTO machines (machine_id, hostname, interface, last_ts, today_rx, today_tx, month_rx, month_tx, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO machines (machine_id, hostname, interface, last_ts, today_rx, today_tx, month_rx, month_tx, updated_at, callback_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(machine_id) DO UPDATE SET
        hostname=excluded.hostname, interface=excluded.interface,
        last_ts=excluded.last_ts, today_rx=excluded.today_rx, today_tx=excluded.today_tx,
-       month_rx=excluded.month_rx, month_tx=excluded.month_tx, updated_at=excluded.updated_at`
+       month_rx=excluded.month_rx, month_tx=excluded.month_tx, updated_at=excluded.updated_at,
+       callback_url=COALESCE(excluded.callback_url, machines.callback_url)`
   ).bind(mid, rec.hostname || "", rec.interface || "", ts,
     Number(today.rx) || 0, Number(today.tx) || 0,
-    Number(month.rx) || 0, Number(month.tx) || 0, now
+    Number(month.rx) || 0, Number(month.tx) || 0, now, callback_url
   ).run();
 
   // 节流写历史（5 分钟窗口）
@@ -188,6 +231,7 @@ async function listMachines(env) {
     today: { rx: r.today_rx || 0, tx: r.today_tx || 0, total: (r.today_rx || 0) + (r.today_tx || 0) },
     month: { rx: r.month_rx || 0, tx: r.month_tx || 0, total: (r.month_rx || 0) + (r.month_tx || 0) },
     updated_at: r.updated_at,
+    callback_url: r.callback_url || "",
   }));
 }
 
@@ -316,6 +360,100 @@ async function agentShouldForceReport(env, mid) {
   ).bind(mid).first();
   const lastTs = row ? Number(row.last_ts) || 0 : 0;
   return lastTs < forceAt;
+}
+
+
+/**
+ * 向单台 VPS 回调口发送签名请求（Bearer + HMAC + 时间窗）
+ */
+async function pushForceToCallback(callbackUrl, token, forceAt) {
+  const bodyObj = { cmd: "force_report", at: forceAt };
+  const body = JSON.stringify(bodyObj);
+  const ts = String(Math.floor(Date.now() / 1000));
+  const nonce = randomNonce(16);
+  const sig = await hmacSha256Hex(token, [ts, nonce, body].join(String.fromCharCode(10)));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(callbackUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "X-Timestamp": ts,
+        "X-Nonce": nonce,
+        "X-Signature": sig,
+      },
+      body,
+      signal: ctrl.signal,
+    });
+    const textBody = await res.text().catch(() => "");
+    return { ok: res.ok, status: res.status, body: textBody.slice(0, 200) };
+  } catch (e) {
+    return { ok: false, status: 0, body: String(e && e.message ? e.message : e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 看板「获取流量」：写 force 标记 + 并发推送到有 callback_url 的机器
+ */
+async function forceReportPushAll(env) {
+  const force_at = await setForceReportAll(env);
+  const { results } = await env.DB.prepare(
+    `SELECT m.machine_id, m.callback_url, t.token
+     FROM machines m
+     LEFT JOIN vps_tokens t ON t.machine_id = m.machine_id
+     ORDER BY m.last_ts DESC`,
+  ).all();
+  const rows = results || [];
+  const targets = [];
+  const skipped = [];
+  for (const r of rows) {
+    const mid = r.machine_id;
+    const cb = (r.callback_url || "").trim();
+    const token = (r.token || "").trim();
+    if (!isValidCallbackUrl(cb)) {
+      skipped.push({ machine_id: mid, reason: "no_callback_url" });
+      continue;
+    }
+    if (!token) {
+      skipped.push({ machine_id: mid, reason: "no_token" });
+      continue;
+    }
+    targets.push({ machine_id: mid, callback_url: cb, token });
+  }
+
+  const resultsPush = [];
+  const concurrency = 10;
+  for (let i = 0; i < targets.length; i += concurrency) {
+    const chunk = targets.slice(i, i + concurrency);
+    const part = await Promise.all(chunk.map(async (t) => {
+      const r = await pushForceToCallback(t.callback_url, t.token, force_at);
+      return { machine_id: t.machine_id, ...r };
+    }));
+    resultsPush.push(...part);
+  }
+
+  const okN = resultsPush.filter((x) => x.ok).length;
+  const fail = resultsPush.filter((x) => !x.ok);
+  return {
+    ok: true,
+    force_at,
+    machines: rows.length,
+    pushed: resultsPush.length,
+    accepted: okN,
+    failed: fail.length,
+    skipped: skipped.length,
+    fail_detail: fail.slice(0, 20).map((x) => ({
+      machine_id: x.machine_id,
+      status: x.status,
+      error: x.body,
+    })),
+    skip_detail: skipped.slice(0, 20),
+    message: `已推送 ${okN}/${resultsPush.length} 台（跳过 ${skipped.length}，失败 ${fail.length}）；无公网/未登记 callback 的机器无法即时推送，请检查 cb_url 与防火墙`,
+  };
 }
 
 // ─── 生成一键命令 ───
@@ -558,7 +696,7 @@ tr.active{background:#1a2740}
         <option value="720">30 天</option>
       </select>
       <button onclick="refresh()">刷新</button>
-      <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="通知所有 VPS 立即上报（约 1 分钟内）">获取流量</button>
+      <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口，立即上报（需公网 callback）">获取流量</button>
       <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>
@@ -791,16 +929,18 @@ async function forceFetchAll() {
       st.textContent = "✗ " + (data?.error || "失败");
       toast("获取流量失败：" + (data?.error || "未知错误"));
     } else {
-      st.textContent = "✓ 已通知 " + (data.machines || 0) + " 台，约 1 分钟内上报";
-      toast("已通知所有 VPS 立即上报");
-      // 轮询刷新几次，等 agent 上报
+      const acc = data.accepted != null ? data.accepted : 0;
+      const push = data.pushed != null ? data.pushed : (data.machines || 0);
+      st.textContent = "✓ 推送成功 " + acc + "/" + push + "（跳过 " + (data.skipped || 0) + "）";
+      toast(data.message || ("已推送 " + acc + " 台"));
+      // 快速刷新几次（回调秒级）
       let n = 0;
       const tick = async () => {
         n++;
         await refresh();
-        if (n < 8) setTimeout(tick, 15000);
+        if (n < 6) setTimeout(tick, 5000);
       };
-      setTimeout(tick, 10000);
+      setTimeout(tick, 2000);
     }
   } catch (e) {
     st.textContent = "✗ " + e.message;
@@ -1048,18 +1188,12 @@ export default {
       return json(result);
     }
 
-    // POST /api/force-report — 看板「获取流量」：通知所有 VPS 立即上报
+    // POST /api/force-report — 看板「获取流量」：签名推送到各 VPS 回调 + 写 force 标记（poll 兜底）
     if (req.method === "POST" && url.pathname === "/api/force-report") {
       if (!env.DB) return json({ ok: false, error: missingDbError(env) }, 500);
       try {
-        const force_at = await setForceReportAll(env);
-        const machines = await listMachines(env);
-        return json({
-          ok: true,
-          force_at,
-          machines: machines.length,
-          message: "已下发强制上报，在线 VPS 约 1 分钟内响应",
-        });
+        const result = await forceReportPushAll(env);
+        return json(result);
       } catch (e) {
         return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
       }

@@ -10,6 +10,9 @@ readonly CF_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-cf.service"
 readonly CF_TIMER_FILE="/etc/systemd/system/${APP_NAME}-cf.timer"
 readonly CF_POLL_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-poll.service"
 readonly CF_POLL_TIMER_FILE="/etc/systemd/system/${APP_NAME}-poll.timer"
+readonly CB_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-cb.service"
+readonly CB_LISTEN_SCRIPT="/usr/local/sbin/${APP_NAME}-cb"
+readonly CB_DEFAULT_PORT="19840"
 
 VNSTAT_WAS_INSTALLED=false
 TG_ENABLED=false
@@ -54,6 +57,13 @@ validate_m_id() {
   return 0
 }
 validate_cf_token() { [[ "$1" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; }
+validate_cb_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1024 && $1 <= 65535 )); }
+validate_callback_url() {
+  [[ "$1" == http://* || "$1" == https://* ]] || return 1
+  [[ "$1" != *" "* ]] || return 1
+  [[ ${#1} -ge 12 && ${#1} -le 256 ]] || return 1
+  return 0
+}
 
 # ─── 参数解析（环境变量优先） ───
 # TG 可选：t_token + t_id 都提供才启用 TG 日报
@@ -119,6 +129,33 @@ resolve_cf_url() {
   validate_url "${val}" || die 'cf_url 须为 https:// 开头的有效 URL。'
   printf '%s' "${val}"
 }
+resolve_cb_port() {
+  local val="${cb_port:-${CB_DEFAULT_PORT}}"
+  validate_cb_port "${val}" || die "cb_port 应为 1024-65535，当前：${val}"
+  printf '%s' "${val}"
+}
+
+# 显式 cb_url 优先；否则用公网 IPv4 + 端口拼 http://IP:PORT/force-report
+detect_callback_url() {
+  local port="$1" explicit="${cb_url:-}" ip=""
+  if [[ -n "${explicit}" ]]; then
+    validate_callback_url "${explicit}" || die "cb_url 无效，应为 http(s)://host:port/force-report"
+    printf '%s' "${explicit}"
+    return 0
+  fi
+  ip="$(curl -4 -fsS --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null || true)"
+  if [[ -z "${ip}" ]]; then
+    ip="$(curl -4 -fsS --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null || true)"
+  fi
+  ip="$(printf '%s' "${ip}" | tr -d '[:space:]')"
+  if [[ "${ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'http://%s:%s/force-report' "${ip}" "${port}"
+    return 0
+  fi
+  printf ''
+  return 0
+}
+
 resolve_cf_time() {
   local val="${cf_time:-0 * * * *}"
   # 未启用 CF 时允许空/默认，不强制校验失败路径
@@ -193,7 +230,7 @@ configure_vnstat() {
 }
 
 write_config() {
-  local ifname="$1" m_id="$2" cf_token="$3" cf_url="$4" tg_token="$5" tg_cid="$6"
+  local ifname="$1" m_id="$2" cf_token="$3" cf_url="$4" tg_token="$5" tg_cid="$6" cb_url="${7:-}" cb_port="${8:-}"
   local tmp; tmp="$(mktemp)"; chmod 600 "${tmp}"
   {
     printf 'INTERFACE=%s\n' "${ifname}"
@@ -203,6 +240,12 @@ write_config() {
     if [[ -n "${cf_token}" && -n "${cf_url}" ]]; then
       printf 'CF_TOKEN=%s\n' "${cf_token}"
       printf 'CF_URL=%s\n' "${cf_url}"
+    fi
+    if [[ -n "${cb_url}" ]]; then
+      printf 'CALLBACK_URL=%s\n' "${cb_url}"
+    fi
+    if [[ -n "${cb_port}" ]]; then
+      printf 'CB_PORT=%s\n' "${cb_port}"
     fi
     if [[ -n "${tg_token}" && -n "${tg_cid}" ]]; then
       printf 'TG_BOT_TOKEN=%s\n' "${tg_token}"
@@ -225,6 +268,8 @@ INTERFACE=""
 CF_URL=""
 CF_TOKEN=""
 MACHINE_ID=""
+CALLBACK_URL=""
+CB_PORT="19840"
 
 log_error() { printf '错误: %s\n' "$*" >&2; }
 
@@ -238,6 +283,8 @@ load_config() {
       CF_URL)       CF_URL="${val}"        ;;
       CF_TOKEN)     CF_TOKEN="${val}"      ;;
       MACHINE_ID)   MACHINE_ID="${val}"    ;;
+      CALLBACK_URL) CALLBACK_URL="${val}"  ;;
+      CB_PORT)      CB_PORT="${val}"       ;;
     esac
   done <"${CONFIG}"
   [[ "${INTERFACE}" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || { log_error "INTERFACE 格式无效。"; return 1; }
@@ -345,6 +392,7 @@ send_cf() {
     --arg m_id "${MACHINE_ID}" \
     --arg host "$(hostname)" \
     --arg iface "${INTERFACE}" \
+    --arg cb "${CALLBACK_URL}" \
     --argjson ts "$(date +%s)" \
     --argjson tr_rx "${TR_RX}" \
     --argjson tr_tx "${TR_TX}" \
@@ -355,6 +403,7 @@ send_cf() {
     --argjson d "${STAT_DAY}" \
     '{
       machine_id: $m_id, hostname: $host, interface: $iface, ts: $ts,
+      callback_url: (if $cb == "" then null else $cb end),
       date: { year: ($y|tonumber), month: $m, day: $d },
       today: { rx: $tr_rx, tx: $tr_tx, total: ($tr_rx + $tr_tx) },
       month: { rx: $mr_rx, tx: $mr_tx, total: ($mr_rx + $mr_tx) }
@@ -418,6 +467,41 @@ REPORTER_EOF
 
   install -o root -g root -m 750 "${tmp_report}" "${REPORT_SCRIPT}"
   rm -f "${tmp_report}"
+}
+
+write_callback_listener() {
+  local port="$1"
+  local tmp; tmp="$(mktemp)"; chmod 600 "${tmp}"
+  # shellcheck disable=SC2001
+  base64 -d >"${tmp}" <<'B64'
+IyEvdXNyL2Jpbi9lbnYgYmFzaAojIOacrOacuuWbnuiwg++8muS7heaOpeWPl+W4piBITUFDIOetvuWQjeeahCBmb3JjZS1yZXBvcnTvvIzop6blj5Hnq4vljbMgQ0Yg5LiK5oqlCnNldCAtRWV1byBwaXBlZmFpbApyZWFkb25seSBDT05GSUc9Ii9ldGMvdHJhZmZpYy10ZWxlZ3JhbS1yZXBvcnQuY29uZiIKcmVhZG9ubHkgUkVQT1JUPSIvdXNyL2xvY2FsL3NiaW4vdHJhZmZpYy10ZWxlZ3JhbS1yZXBvcnQiCnJlYWRvbmx5IE5PTkNFX0RJUj0iL3J1bi90cmFmZmljLXRlbGVncmFtLXJlcG9ydC1ub25jZXMiCkNGX1RPS0VOPSIiCkNCX1BPUlQ9IjE5ODQwIgoKbG9hZF90b2tlbigpIHsKICBbWyAtciAiJHtDT05GSUd9IiBdXSB8fCBleGl0IDEKICB3aGlsZSBJRlM9Jz0nIHJlYWQgLXIga2V5IHZhbDsgZG8KICAgIGNhc2UgIiR7a2V5fSIgaW4KICAgICAgQ0ZfVE9LRU4pIENGX1RPS0VOPSIke3ZhbH0iIDs7CiAgICAgIENCX1BPUlQpICBDQl9QT1JUPSIke3ZhbH0iIDs7CiAgICBlc2FjCiAgZG9uZSA8IiR7Q09ORklHfSIKICBbWyAtbiAiJHtDRl9UT0tFTn0iIF1dIHx8IGV4aXQgMQp9CgptYWluKCkgewogIGxvYWRfdG9rZW4KICBsb2NhbCBwb3J0PSIkezE6LSR7Q0JfUE9SVH19IgogIGNvbW1hbmQgLXYgcHl0aG9uMyA+L2Rldi9udWxsIDI+JjEgfHwgeyBlY2hvICLpnIDopoEgcHl0aG9uMyIgPiYyOyBleGl0IDE7IH0KICBleGVjIHB5dGhvbjMgLSAiJHtwb3J0fSIgIiR7Q0ZfVE9LRU59IiA8PCdQWUlOTkVSJwppbXBvcnQgaGFzaGxpYiwgaG1hYywgb3MsIHJlLCBzb2NrZXQsIHN1YnByb2Nlc3MsIHRpbWUKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpSRVBPUlQgPSAiL3Vzci9sb2NhbC9zYmluL3RyYWZmaWMtdGVsZWdyYW0tcmVwb3J0IgpOT05DRV9ESVIgPSBQYXRoKCIvcnVuL3RyYWZmaWMtdGVsZWdyYW0tcmVwb3J0LW5vbmNlcyIpCnBvcnQgPSBpbnQob3Muc3lzLmFyZ3ZbMV0pCnRva2VuID0gb3Muc3lzLmFyZ3ZbMl0KCmRlZiBzZWVuX25vbmNlKG46IHN0cikgLT4gYm9vbDoKICAgIE5PTkNFX0RJUi5ta2RpcihwYXJlbnRzPVRydWUsIGV4aXN0X29rPVRydWUpCiAgICBub3cgPSB0aW1lLnRpbWUoKQogICAgZm9yIGYgaW4gbGlzdChOT05DRV9ESVIuaXRlcmRpcigpKToKICAgICAgICB0cnk6CiAgICAgICAgICAgIGlmIG5vdyAtIGYuc3RhdCgpLnN0X210aW1lID4gMzAwOgogICAgICAgICAgICAgICAgZi51bmxpbmsobWlzc2luZ19vaz1UcnVlKQogICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgIHBhc3MKICAgIHAgPSBOT05DRV9ESVIgLyBuCiAgICBpZiBwLmV4aXN0cygpOgogICAgICAgIHJldHVybiBUcnVlCiAgICBwLndyaXRlX3RleHQoIjEiKQogICAgcmV0dXJuIEZhbHNlCgpkZWYgaGFuZGxlKGNvbm4sIHRva2VuKToKICAgIGNvbm4uc2V0dGltZW91dCgxMCkKICAgIGRhdGEgPSBiIiIKICAgIHdoaWxlIGIiXHJcblxyXG4iIG5vdCBpbiBkYXRhIGFuZCBsZW4oZGF0YSkgPCA4MTkyOgogICAgICAgIGNodW5rID0gY29ubi5yZWN2KDEwMjQpCiAgICAgICAgaWYgbm90IGNodW5rOgogICAgICAgICAgICBicmVhawogICAgICAgIGRhdGEgKz0gY2h1bmsKICAgIGlmIGIiXHJcblxyXG4iIG5vdCBpbiBkYXRhOgogICAgICAgIHJldHVybgogICAgaGVhZCwgXywgcmVzdCA9IGRhdGEucGFydGl0aW9uKGIiXHJcblxyXG4iKQogICAgbGluZXMgPSBoZWFkLmRlY29kZSgibGF0aW4xIiwgInJlcGxhY2UiKS5zcGxpdCgiXHJcbiIpCiAgICByZXEgPSBsaW5lc1swXS5zcGxpdCgpCiAgICBpZiBsZW4ocmVxKSA8IDI6CiAgICAgICAgcmV0dXJuCiAgICBtZXRob2QsIHBhdGggPSByZXFbMF0sIHJlcVsxXQogICAgaGVhZGVycyA9IHt9CiAgICBmb3IgbGluZSBpbiBsaW5lc1sxOl06CiAgICAgICAgaWYgIjoiIGluIGxpbmU6CiAgICAgICAgICAgIGssIHYgPSBsaW5lLnNwbGl0KCI6IiwgMSkKICAgICAgICAgICAgaGVhZGVyc1trLnN0cmlwKCkubG93ZXIoKV0gPSB2LnN0cmlwKCkKICAgIGNsZW4gPSBpbnQoaGVhZGVycy5nZXQoImNvbnRlbnQtbGVuZ3RoIikgb3IgMCkKICAgIGJvZHkgPSByZXN0CiAgICB3aGlsZSBsZW4oYm9keSkgPCBjbGVuIGFuZCBjbGVuIDwgNDA5NjoKICAgICAgICBib2R5ICs9IGNvbm4ucmVjdihjbGVuIC0gbGVuKGJvZHkpKQogICAgYm9keSA9IGJvZHlbOmNsZW5dCgogICAgZGVmIHJlc3AoY29kZSwgbXNnKToKICAgICAgICBiID0gbXNnLmVuY29kZSgpCiAgICAgICAgY29ubi5zZW5kYWxsKAogICAgICAgICAgICBmIkhUVFAvMS4xIHtjb2RlfVxyXG5Db250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb25cclxuQ29ubmVjdGlvbjogY2xvc2VcclxuQ29udGVudC1MZW5ndGg6IHtsZW4oYil9XHJcblxyXG4iLmVuY29kZSgpCiAgICAgICAgICAgICsgYgogICAgICAgICkKCiAgICBpZiBtZXRob2QgIT0gIlBPU1QiIG9yIHBhdGggIT0gIi9mb3JjZS1yZXBvcnQiOgogICAgICAgIHJlc3AoIjQwNCBOb3QgRm91bmQiLCAneyJvayI6ZmFsc2UsImVycm9yIjoibm90IGZvdW5kIn0nKQogICAgICAgIHJldHVybgogICAgYXV0aCA9IGhlYWRlcnMuZ2V0KCJhdXRob3JpemF0aW9uIiwgIiIpCiAgICBpZiBhdXRoLmxvd2VyKCkuc3RhcnRzd2l0aCgiYmVhcmVyICIpOgogICAgICAgIGF1dGggPSBhdXRoWzc6XS5zdHJpcCgpCiAgICBpZiBub3QgYXV0aCBvciBub3QgaG1hYy5jb21wYXJlX2RpZ2VzdChhdXRoLCB0b2tlbik6CiAgICAgICAgcmVzcCgiNDAxIFVuYXV0aG9yaXplZCIsICd7Im9rIjpmYWxzZSwiZXJyb3IiOiJ1bmF1dGhvcml6ZWQifScpCiAgICAgICAgcmV0dXJuCiAgICB0cyA9IGhlYWRlcnMuZ2V0KCJ4LXRpbWVzdGFtcCIsICIiKQogICAgbm9uY2UgPSBoZWFkZXJzLmdldCgieC1ub25jZSIsICIiKQogICAgc2lnID0gaGVhZGVycy5nZXQoIngtc2lnbmF0dXJlIiwgIiIpLmxvd2VyKCkKICAgIGlmIG5vdCByZS5mdWxsbWF0Y2gociJbMC05XSsiLCB0cyk6CiAgICAgICAgcmVzcCgiNDAxIFVuYXV0aG9yaXplZCIsICd7Im9rIjpmYWxzZSwiZXJyb3IiOiJiYWQgdGltZXN0YW1wIn0nKQogICAgICAgIHJldHVybgogICAgaWYgYWJzKGludCh0aW1lLnRpbWUoKSkgLSBpbnQodHMpKSA+IDEyMDoKICAgICAgICByZXNwKCI0MDEgVW5hdXRob3JpemVkIiwgJ3sib2siOmZhbHNlLCJlcnJvciI6InRpbWVzdGFtcCBleHBpcmVkIn0nKQogICAgICAgIHJldHVybgogICAgaWYgbm90IHJlLmZ1bGxtYXRjaChyIltBLVphLXowLTkuXy1dezgsNjR9Iiwgbm9uY2UpOgogICAgICAgIHJlc3AoIjQwMSBVbmF1dGhvcml6ZWQiLCAneyJvayI6ZmFsc2UsImVycm9yIjoiYmFkIG5vbmNlIn0nKQogICAgICAgIHJldHVybgogICAgaWYgc2Vlbl9ub25jZShub25jZSk6CiAgICAgICAgcmVzcCgiNDAxIFVuYXV0aG9yaXplZCIsICd7Im9rIjpmYWxzZSwiZXJyb3IiOiJub25jZSByZXVzZWQifScpCiAgICAgICAgcmV0dXJuCiAgICBtc2cgPSBmInt0c31cbntub25jZX1cbiIuZW5jb2RlKCkgKyBib2R5CiAgICBleHBlY3QgPSBobWFjLm5ldyh0b2tlbi5lbmNvZGUoKSwgbXNnLCBoYXNobGliLnNoYTI1NikuaGV4ZGlnZXN0KCkKICAgIGlmIG5vdCBobWFjLmNvbXBhcmVfZGlnZXN0KGV4cGVjdCwgc2lnKToKICAgICAgICByZXNwKCI0MDEgVW5hdXRob3JpemVkIiwgJ3sib2siOmZhbHNlLCJlcnJvciI6ImJhZCBzaWduYXR1cmUifScpCiAgICAgICAgcmV0dXJuCiAgICBzdWJwcm9jZXNzLlBvcGVuKFtSRVBPUlQsICItLWNmIl0sIHN0ZG91dD1zdWJwcm9jZXNzLkRFVk5VTEwsIHN0ZGVycj1zdWJwcm9jZXNzLkRFVk5VTEwpCiAgICByZXNwKCIyMDAgT0siLCAneyJvayI6dHJ1ZSwiYWNjZXB0ZWQiOnRydWV9JykKCnNydiA9IHNvY2tldC5zb2NrZXQoc29ja2V0LkFGX0lORVQsIHNvY2tldC5TT0NLX1NUUkVBTSkKc3J2LnNldHNvY2tvcHQoc29ja2V0LlNPTF9TT0NLRVQsIHNvY2tldC5TT19SRVVTRUFERFIsIDEpCnNydi5iaW5kKCgiMC4wLjAuMCIsIHBvcnQpKQpzcnYubGlzdGVuKDMyKQp3aGlsZSBUcnVlOgogICAgY29ubiwgXyA9IHNydi5hY2NlcHQoKQogICAgdHJ5OgogICAgICAgIGhhbmRsZShjb25uLCB0b2tlbikKICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgcGFzcwogICAgZmluYWxseToKICAgICAgICB0cnk6CiAgICAgICAgICAgIGNvbm4uY2xvc2UoKQogICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgIHBhc3MKUFlJTk5FUgp9CgptYWluICIkQCIK
+B64
+  install -o root -g root -m 750 "${tmp}" "${CB_LISTEN_SCRIPT}"
+  rm -f "${tmp}"
+
+  cat >"${CB_SERVICE_FILE}" <<SERVICE_EOF
+[Unit]
+Description=Accept signed force-report callbacks for traffic agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${CB_LISTEN_SCRIPT} ${port}
+Restart=on-failure
+RestartSec=3
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
 }
 
 # ─── systemd 单元 ───
@@ -514,11 +598,11 @@ SERVICE_EOF
 write_poll_timer() {
   cat >"${CF_POLL_TIMER_FILE}" <<TIMER_EOF
 [Unit]
-Description=Poll Cloudflare force-report every minute
+Description=Poll Cloudflare force-report (fallback every 15 min)
 [Timer]
-OnBootSec=20
-OnUnitActiveSec=60
-AccuracySec=10s
+OnBootSec=45
+OnUnitActiveSec=15min
+AccuracySec=1min
 Unit=${APP_NAME}-poll.service
 [Install]
 WantedBy=timers.target
@@ -530,11 +614,15 @@ enable_timers() {
   systemctl daemon-reload
   if [[ "${cf_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}-cf.timer"
-    systemctl enable --now "${APP_NAME}-poll.timer"
+    systemctl enable --now "${APP_NAME}-cb.service"
+    # 清理旧版 poll 兜底（若曾安装）
+    systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
+    rm -f "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"
   else
     systemctl disable --now "${APP_NAME}-cf.timer" >/dev/null 2>&1 || true
     systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
-    rm -f "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}" "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"
+    systemctl disable --now "${APP_NAME}-cb.service" >/dev/null 2>&1 || true
+    rm -f "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}" "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"       "${CB_SERVICE_FILE}" "${CB_LISTEN_SCRIPT}"
   fi
   if [[ "${tg_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}.timer"
@@ -574,7 +662,8 @@ print_summary() {
   printf '  配置文件：   %s（仅 root 可读）\n' "${CONFIG_FILE}"
   if [[ "${CF_ENABLED}" == "true" ]]; then
     printf '  立即 CF 上报：systemctl start %s-cf.service\n' "${APP_NAME}"
-    printf '  强制拉取：  看板点「获取流量」（VPS 约 1 分钟内响应）\n'
+    printf '  回调推送：  看板「获取流量」→ Worker 签名请求本机 /force-report\n'
+    printf '  回调服务：  systemctl status %s-cb.service\n' "${APP_NAME}"
     printf '  查看日志：   journalctl -u %s-cf.service\n' "${APP_NAME}"
   fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
@@ -593,10 +682,12 @@ uninstall_app() {
   systemctl disable --now "${APP_NAME}.timer" >/dev/null 2>&1 || true
   systemctl disable --now "${APP_NAME}-cf.timer" >/dev/null 2>&1 || true
   systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
+  systemctl disable --now "${APP_NAME}-cb.service" >/dev/null 2>&1 || true
   rm -f "${REPORT_SCRIPT}" "${CONFIG_FILE}" \
     "${SERVICE_FILE}" "${TIMER_FILE}" \
     "${CF_SERVICE_FILE}" "${CF_TIMER_FILE}" \
-    "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"
+    "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}" \
+    "${CB_SERVICE_FILE}" "${CB_LISTEN_SCRIPT}"
   systemctl daemon-reload; systemctl reset-failed >/dev/null 2>&1 || true
   log '已卸载流量汇报服务；vnStat 软件及数据库未删除。'
 }
@@ -619,8 +710,16 @@ main() {
   cf_token_val="$(resolve_cf_token)"
   cf_url_val="$(resolve_cf_url)"
   cf_cron="$(resolve_cf_time)"
+  local cb_port_val="" cb_url_val=""
   if [[ -n "${cf_url_val}" && -n "${cf_token_val}" && -n "${mid_val}" ]]; then
     CF_ENABLED=true
+    cb_port_val="$(resolve_cb_port)"
+    cb_url_val="$(detect_callback_url "${cb_port_val}")"
+    if [[ -z "${cb_url_val}" ]]; then
+      log "警告: 未能自动检测公网 IP，看板即时推送将不可用。可设置 cb_url=http://IP:端口/force-report 并放行防火墙"
+    else
+      log "回调地址: ${cb_url_val}"
+    fi
   fi
 
   # 至少启用一条通道
@@ -629,17 +728,21 @@ main() {
   fi
 
   install_deps
+  if [[ "${CF_ENABLED}" == "true" ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      apt-get install -y --no-install-recommends python3 || log "警告: 未安装 python3，回调监听可能无法启动"
+    fi
+  fi
   ifname="$(detect_interface)"
   configure_vnstat "${ifname}"
-  write_config "${ifname}" "${mid_val}" "${cf_token_val}" "${cf_url_val}" "${tg_token}" "${tg_cid}"
+  write_config "${ifname}" "${mid_val}" "${cf_token_val}" "${cf_url_val}" "${tg_token}" "${tg_cid}" "${cb_url_val}" "${cb_port_val}"
   write_reporter
 
   # CF 服务/定时（可选）
   if [[ "${CF_ENABLED}" == "true" ]]; then
     write_cf_service_unit
     write_cf_timer "${cf_cron}"
-    write_poll_service_unit
-    write_poll_timer
+    write_callback_listener "${cb_port_val:-$CB_DEFAULT_PORT}"
   fi
 
   # TG 服务/定时（可选）

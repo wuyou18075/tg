@@ -2139,12 +2139,34 @@ function fillRangeOptions(sel, mode) {
   sel.value = opts.some(x => x[0] === cur) ? cur : def;
 }
 
+function saveChartPrefs() {
+  try {
+    const r = document.getElementById("range");
+    const rx = document.getElementById("chkRx");
+    const tx = document.getElementById("chkTx");
+    localStorage.setItem("dash_chart_mode", chartMode);
+    if (r && r.value) localStorage.setItem("dash_chart_span_" + chartMode, r.value);
+    if (rx) localStorage.setItem("dash_chart_rx", rx.checked ? "1" : "0");
+    if (tx) localStorage.setItem("dash_chart_tx", tx.checked ? "1" : "0");
+  } catch { /* ignore */ }
+}
+function loadChartPrefs() {
+  try {
+    chartMode = localStorage.getItem("dash_chart_mode") === "month" ? "month" : "day";
+  } catch { /* ignore */ }
+}
 function setChartMode(mode) {
   chartMode = mode === "month" ? "month" : "day";
   document.querySelectorAll("#modeSeg button").forEach(b => {
     b.classList.toggle("active", b.dataset.mode === chartMode);
   });
   fillRangeOptions(document.getElementById("range"), chartMode);
+  // 恢复该模式下的 span
+  try {
+    const saved = localStorage.getItem("dash_chart_span_" + chartMode);
+    if (saved) document.getElementById("range").value = saved;
+  } catch { /* ignore */ }
+  saveChartPrefs();
   loadHistory();
 }
 
@@ -2240,6 +2262,7 @@ function renderMainChart() {
   if (chart) chart.destroy();
   const showRx = document.getElementById("chkRx").checked;
   const showTx = document.getElementById("chkTx").checked;
+  saveChartPrefs();
   chart = buildStackedChart(ctx, mainPoints, {
     showRx, showTx,
     title: "全部机器 · " + (chartMode === "month" ? "月累计" : "日累计"),
@@ -2265,6 +2288,7 @@ async function loadHistory() {
     const data = await api(q);
     mainPoints = (data && data.points) || [];
     renderMainChart();
+    saveChartPrefs();
   } catch (e) {
     toast("加载统计失败：" + (e && e.message ? e.message : String(e)));
   }
@@ -2866,12 +2890,12 @@ async function confirmUpdateVps() {
   const access_token = document.getElementById("upToken").value.trim();
   const cf_url = document.getElementById("upUrl").value.trim();
   const cf_time = document.getElementById("upTime").value.trim();
-  const cb_port = (document.getElementById("upCbPort") || {}).value || "";
+  const cb_port = ((document.getElementById("upCbPort") || {}).value || "").trim();
   const rotate_token = document.getElementById("upRotate").checked;
   if (!machine_id) { toast("请填写机器 ID"); return; }
-  if (cb_port && (!/^\d+$/.test(cb_port) || Number(cb_port) < 1024 || Number(cb_port) > 65535)) {
-    toast("回调端口应为 1024-65535"); return;
-  }
+  // 空 → 用原端口（后端补）；非数字 → 报错；数字越界 → 报错
+  if (cb_port && !/^\d+$/.test(cb_port)) { toast("回调端口应为纯数字"); return; }
+  if (cb_port && (Number(cb_port) < 1024 || Number(cb_port) > 65535)) { toast("回调端口需在 1024-65535，当前 " + cb_port); return; }
   const btn = document.querySelector("#upBtnRegion .green");
   if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
   try {
@@ -2948,10 +2972,9 @@ async function genCmd() {
     toast("机器 ID 1-64 字，支持中英文/数字/._-:（如 香港-1）");
     return;
   }
-  const cbPort = document.getElementById("vpsCbPort").value.trim() || "19840";
-  if (!/^\d+$/.test(cbPort) || Number(cbPort) < 1024 || Number(cbPort) > 65535) {
-    toast("回调端口应为 1024-65535"); return;
-  }
+  const cbRaw = ((document.getElementById("vpsCbPort") || {}).value || "").trim();
+  let cbPort = /^\d+$/.test(cbRaw) ? Number(cbRaw) : 19840;
+  if (cbPort < 1024 || cbPort > 65535) { toast("回调端口需在 1024-65535，当前 " + cbPort); return; }
   const btn = document.querySelector("#vpsBtnRegion .green");
   if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
   try {
@@ -2999,7 +3022,23 @@ document.getElementById("vpsMid").addEventListener("keydown", e => {
   if (e.key === "Enter") genCmd();
 });
 
+loadChartPrefs();
+// 恢复勾选
+try {
+  const rx = document.getElementById("chkRx");
+  const tx = document.getElementById("chkTx");
+  if (localStorage.getItem("dash_chart_rx") === "0") rx.checked = false;
+  if (localStorage.getItem("dash_chart_tx") === "0") tx.checked = false;
+} catch { /* ignore */ }
+// 高亮恢复的 mode 按钮
+document.querySelectorAll("#modeSeg button").forEach(b => {
+  b.classList.toggle("active", b.dataset.mode === chartMode);
+});
 fillRangeOptions(document.getElementById("range"), chartMode);
+try {
+  const savedSpan = localStorage.getItem("dash_chart_span_" + chartMode);
+  if (savedSpan) document.getElementById("range").value = savedSpan;
+} catch { /* ignore */ }
 refresh();
 </script>`;
 }
@@ -3295,10 +3334,4 @@ export default {
         const hh = String(sh.getHours()).padStart(2, "0");
         const mm = String(sh.getMinutes()).padStart(2, "0");
         if (hh === th && mm === tm) {
-          const r = await tgSummary(env);
-          if (!r || !r.ok) console.log("[scheduled] TG summary skip:", r && r.error);
-        }
-      } catch (e) { console.log("[scheduled] error", e && e.message); }
-    })());
-  },
-};
+          const

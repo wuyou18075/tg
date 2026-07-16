@@ -3338,4 +3338,10 @@ export default {
         const hh = String(sh.getHours()).padStart(2, "0");
         const mm = String(sh.getMinutes()).padStart(2, "0");
         if (hh === th && mm === tm) {
-          const
+          const r = await tgSummary(env);
+          if (!r || !r.ok) console.log("[scheduled] TG summary skip:", r && r.error);
+        }
+      } catch (e) { console.log("[scheduled] error", e && e.message); }
+    })());
+  },
+};

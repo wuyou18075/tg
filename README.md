@@ -89,6 +89,37 @@ bash /usr/local/sbin/traffic-telegram-report --uninstall 2>/dev/null || bash sum
 | `access_token` | Web(Worker) ↔ 每台 VPS 的通信密钥，上报与「获取流量」推送都用它 | 看板「添加 VPS」时**每台独立生成**，互不相同 |
 | `database_id` | D1 数据库 ID | 一键部署时 CF 自动创建并回填到 `wrangler.toml` |
 
+### 通信规则（谁连谁、用什么认证）
+
+整套系统三条通信链路，各自的认证方式不同：
+
+```
+① 定时上报      VPS ──(每小时, cron)──▶ Worker /api/report
+                  Authorization: Bearer <本机 access_token>
+                  Worker 查 vps_tokens 校验 → 写入 D1
+
+② 获取流量      看板点按钮 → Worker ──(TCP 签名推送)──▶ VPS :19840/force-report
+                  Worker 用本机 access_token 做 HMAC 签名
+                  VPS 回调用本机 ACCESS_TOKEN 校验签名 → 立即触发一次 ①
+
+③ TG 汇总       Worker ──▶ Telegram Bot API
+                  用 TG_TOKEN（Bot Token）发消息到 TG_ID
+                  （纯 Worker → Telegram，不经 VPS）
+```
+
+| 链路 | 方向 | 凭证 | 频率 |
+|------|------|------|------|
+| ① 定时上报 | VPS → Worker | 该机 `access_token`（Bearer） | 每小时（`cf_time` 可改） |
+| ② 获取流量 | Worker → VPS | 该机 `access_token`（Bearer + HMAC 签名） | 手动点按钮才触发 |
+| ③ TG 汇总 | Worker → Telegram | `TG_TOKEN`（Bot Token） | 手动 / 定时 |
+
+要点：
+
+- **没有长连接、没有轮询**。VPS 不监听 Worker，Worker 也不连 VPS 的上报口；平时只有 ① 按小时主动上报。
+- **② 需要回调可达**：VPS 要有公网 IP / 放行回调端口（默认 `19840`），Worker 才能推送 `/force-report`；连不上的机器「获取流量」会失败，但不影响 ① 的定时上报。
+- **每台 VPS 的 `access_token` 互不相同**，互不影响；泄露一台只需在看板「更新注册」轮换该机密钥。
+- **`TG_TOKEN` 与上报鉴权无关**：它只用于 Worker 发 TG 消息（链路 ③）。VPS 能不能上报/被推送只看 `access_token`。
+
 **部署后操作：** 打开 Worker 地址 → 用 `PASSWORD` 登录 → 「添加 VPS」生成每台机器的安装命令（含该机独立 `access_token`）→ 在 VPS 上执行即可开始上报。
 
 > 已部署用户日常更新代码用 git push（见方案二·B），不必重复一键部署。

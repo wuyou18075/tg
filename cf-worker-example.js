@@ -618,7 +618,7 @@ async function forceReportPushAll(env) {
       error: x.body,
     })),
     skip_detail: skipped.slice(0, 20),
-    message: `已推送 ${okN}/${resultsPush.length} 台（跳过 ${skipped.length}，失败 ${fail.length}）；无公网/未登记 callback 的机器无法即时推送，请检查 cb_url 与防火墙`,
+    message: `已推送 ${okN}/${resultsPush.length} 台（跳过 ${skipped.length}，失败 ${fail.length}）；无公网/未登记 callback 的机器无法即时推送，请检查 cb_url 与防火墙（无 poll 兜底）`,
   };
 }
 
@@ -824,7 +824,7 @@ td.ops button{margin-right:4px}
         <option value="720">30 天</option>
       </select>
       <button onclick="refresh()">刷新</button>
-      <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口，立即上报（需公网 callback）">获取流量</button>
+      <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口立即上报（需公网；无 poll）">获取流量</button>
       <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>

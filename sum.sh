@@ -434,26 +434,12 @@ run_cf() {
   send_cf
 }
 
-# 看板「获取流量」：轮询 Worker 是否要求立即上报
-run_poll() {
-  [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]] || return 0
-  local base pull_url resp need
-  base="${CF_URL%/api/report}"
-  pull_url="${base}/api/agent/pull"
-  resp="$(curl --silent --show-error --fail-with-body     --connect-timeout 8 --max-time 20 --retry 1     --request GET     --header "Authorization: Bearer ${CF_TOKEN}"     --header "X-Machine-Id: ${MACHINE_ID}"     "${pull_url}" 2>/dev/null)" || return 0
-  need="$(jq -r '.force_report // false' <<<"${resp}" 2>/dev/null || printf false)"
-  if [[ "${need}" == "true" ]]; then
-    run_cf
-  fi
-}
-
 main() {
   umask 077; export LC_ALL=C
   load_config; require_cmds
   case "${1:-}" in
     --tg|--test) run_tg "${1}" ;;
     --cf)        run_cf ;;
-    --poll)      run_poll ;;
     "")
       if [[ -n "${TG_BOT_TOKEN}" && -n "${TG_CHAT_ID}" ]]; then run_tg; fi
       if [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]]; then run_cf; fi
@@ -575,47 +561,16 @@ WantedBy=timers.target
 TIMER_EOF
 }
 
-write_poll_service_unit() {
-  cat >"${CF_POLL_SERVICE_FILE}" <<SERVICE_EOF
-[Unit]
-Description=Poll Cloudflare for force traffic report
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=${REPORT_SCRIPT} --poll
-User=root; Group=root; UMask=0077
-NoNewPrivileges=true; PrivateDevices=true; PrivateTmp=true
-ProtectKernelModules=true; ProtectKernelTunables=true
-ProtectSystem=strict; RestrictAddressFamilies=AF_INET AF_INET6
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-}
-
-write_poll_timer() {
-  cat >"${CF_POLL_TIMER_FILE}" <<TIMER_EOF
-[Unit]
-Description=Poll Cloudflare force-report (fallback every 15 min)
-[Timer]
-OnBootSec=45
-OnUnitActiveSec=15min
-AccuracySec=1min
-Unit=${APP_NAME}-poll.service
-[Install]
-WantedBy=timers.target
-TIMER_EOF
-}
 
 enable_timers() {
   local tg_enabled="$1" cf_enabled="$2"
   systemctl daemon-reload
   if [[ "${cf_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}-cf.timer"
-    systemctl enable --now "${APP_NAME}-poll.timer"
     systemctl enable --now "${APP_NAME}-cb.service"
+    # 不再安装 poll；清理旧版 poll timer（若曾装过）
+    systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
+    rm -f "${CF_POLL_SERVICE_FILE}" "${CF_POLL_TIMER_FILE}"
   else
     systemctl disable --now "${APP_NAME}-cf.timer" >/dev/null 2>&1 || true
     systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
@@ -661,7 +616,6 @@ print_summary() {
   if [[ "${CF_ENABLED}" == "true" ]]; then
     printf '  立即 CF 上报：systemctl start %s-cf.service\n' "${APP_NAME}"
     printf '  回调推送：  看板「获取流量」→ Worker 签名请求本机 /force-report\n'
-    printf '  兜底轮询：  每 15 分钟（无公网/回调失败时）\n'
     printf '  回调服务：  systemctl status %s-cb.service\n' "${APP_NAME}"
     printf '  查看日志：   journalctl -u %s-cf.service\n' "${APP_NAME}"
   fi
@@ -741,8 +695,6 @@ main() {
   if [[ "${CF_ENABLED}" == "true" ]]; then
     write_cf_service_unit
     write_cf_timer "${cf_cron}"
-    write_poll_service_unit
-    write_poll_timer
     write_callback_listener "${cb_port_val:-$CB_DEFAULT_PORT}"
   fi
 

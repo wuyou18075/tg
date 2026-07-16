@@ -4,7 +4,7 @@
  * - 密码登录看板 + 配置面板（t_token/t_id/t_time/cf_time）
  * - 添加 VPS：生成唯一独立密码，VPS 用此密码上报（不暴露全局 TG 密钥）
  * - TG 汇总：看板「发送 TG 汇总」→ 聚合所有机器 → 发 Telegram
- * - D1 历史柱状图 + Chart.js
+ * - D1 日/月堆叠柱统计 + Chart.js
  *
  * 部署：
  *   1. 创建 D1 数据库 traffic-db
@@ -265,6 +265,78 @@ async function getHistory(env, mid, hours) {
      FROM snapshots WHERE machine_id = ? AND ts >= ? ORDER BY ts ASC`
   ).bind(mid, since).all();
   return results || [];
+}
+
+/** 日/月聚合：单机 mid 或全部（mid 空）。
+ *  day:  每天取各机最后一条 snapshot 的 today_rx/tx，再按日求和
+ *  month: 每月取各机最后一条 snapshot 的 month_rx/tx，再按月求和
+ */
+async function getHistoryAgg(env, { mid, mode, span }) {
+  const isMonth = mode === "month";
+  const n = Math.min(isMonth ? 24 : 90, Math.max(1, Number(span) || (isMonth ? 6 : 14)));
+  const now = Math.floor(Date.now() / 1000);
+  const since = isMonth ? now - n * 31 * 86400 : now - n * 86400;
+
+  let sql = `SELECT machine_id, ts, today_rx, today_tx, month_rx, month_tx
+             FROM snapshots WHERE ts >= ?`;
+  const binds = [since];
+  if (mid) {
+    sql += ` AND machine_id = ?`;
+    binds.push(mid);
+  }
+  sql += ` ORDER BY ts ASC`;
+  const { results } = await env.DB.prepare(sql).bind(...binds).all();
+  const rows = results || [];
+
+  // key → { rx, tx }  先按 (bucket, machine) 取最后一条，再跨机求和
+  const lastByBucketMid = new Map();
+  for (const r of rows) {
+    const d = new Date(Number(r.ts) * 1000);
+    const bucket = isMonth
+      ? (d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"))
+      : (d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"));
+    const k = bucket + "|" + r.machine_id;
+    lastByBucketMid.set(k, {
+      bucket,
+      rx: Number(isMonth ? r.month_rx : r.today_rx) || 0,
+      tx: Number(isMonth ? r.month_tx : r.today_tx) || 0,
+    });
+  }
+
+  const byBucket = new Map();
+  for (const v of lastByBucketMid.values()) {
+    const cur = byBucket.get(v.bucket) || { rx: 0, tx: 0 };
+    cur.rx += v.rx;
+    cur.tx += v.tx;
+    byBucket.set(v.bucket, cur);
+  }
+
+  // 补齐时间轴空桶
+  const labels = [];
+  if (isMonth) {
+    const base = new Date();
+    base.setDate(1);
+    base.setHours(0, 0, 0, 0);
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(base);
+      d.setMonth(d.getMonth() - i);
+      labels.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
+    }
+  } else {
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(base);
+      d.setDate(d.getDate() - i);
+      labels.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"));
+    }
+  }
+
+  const points = labels.map((bucket) => {
+    const v = byBucket.get(bucket) || { rx: 0, tx: 0 };
+    return { bucket, rx: v.rx, tx: v.tx, total: v.rx + v.tx };
+  });
+  return { mode: isMonth ? "month" : "day", span: n, machine_id: mid || null, points };
 }
 
 async function getConfig(env) {
@@ -803,7 +875,7 @@ tr.active{background:#1a2740}
 button.sm{padding:4px 8px;font-size:12px;border-radius:6px}
 button.danger{background:#b91c1c;border-color:#b91c1c;color:#fff}
 button.danger:hover{background:#991b1b}
-td.ops{white-space:nowrap}
+td.ops{white-space:nowrap;min-width:240px}
 td.ops button{margin-right:4px}
 .settings-form{max-width:520px}
 .settings-form label{display:block;font-size:12px;color:#9fb3d9;margin:14px 0 4px}
@@ -827,6 +899,15 @@ td.ops button{margin-right:4px}
 .cmd-ok{color:#34d399;font-size:13px;margin:8px 0 4px;display:flex;gap:8px;align-items:center}
 .token-preview{color:#8aa0c6;font-size:11px}
 .tg-summary-result{background:#0b1220;border:1px solid #243049;border-radius:8px;padding:12px;margin-top:8px;font-size:12px;white-space:pre-wrap;line-height:1.5}
+.chart-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.seg{display:inline-flex;border:1px solid #33415f;border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:#0b1220;padding:7px 14px;font-size:12px}
+.seg button.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#9fb3d9;cursor:pointer;user-select:none}
+.chk input{accent-color:#3b82f6}
+.chart-title-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.chart-title-row h2{margin:0}
+
 </style>
 
 <header>
@@ -848,19 +929,24 @@ td.ops button{margin-right:4px}
   <div id="pageDash" class="page active">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
       <button class="primary" onclick="openAddVps()">＋ 添加 VPS</button>
-      <select id="range" onchange="loadHistory()">
-        <option value="24">24 小时</option>
-        <option value="72">3 天</option>
-        <option value="168" selected>7 天</option>
-        <option value="720">30 天</option>
-      </select>
       <button onclick="refresh()">刷新</button>
       <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口立即上报（需公网；无 poll）">获取流量</button>
       <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>
     <div class="panel">
-      <h2>历史统计 · 今日累计（GB）</h2>
+      <div class="chart-title-row">
+        <h2 id="chartPanelTitle">总流量统计</h2>
+      </div>
+      <div class="chart-toolbar">
+        <div class="seg" id="modeSeg">
+          <button type="button" class="active" data-mode="day" onclick="setChartMode('day')">日统计</button>
+          <button type="button" data-mode="month" onclick="setChartMode('month')">月统计</button>
+        </div>
+        <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
+        <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
+        <select id="range" onchange="loadHistory()"></select>
+      </div>
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
     <div class="panel">
@@ -966,6 +1052,27 @@ td.ops button{margin-right:4px}
   </div>
 </div>
 
+<!-- 单机流量统计弹窗 -->
+<div class="modal-overlay" id="histModal">
+  <div class="modal" style="width:min(860px,96vw)">
+    <h2 id="histModalTitle">流量统计</h2>
+    <p class="desc" id="histModalDesc">单机日/月累计（入站+出站堆叠）</p>
+    <div class="chart-toolbar">
+      <div class="seg" id="histModeSeg">
+        <button type="button" class="active" data-mode="day" onclick="setHistMode('day')">日统计</button>
+        <button type="button" data-mode="month" onclick="setHistMode('month')">月统计</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="histChkRx" checked onchange="renderHistChart()"> 入站</label>
+      <label class="chk"><input type="checkbox" id="histChkTx" checked onchange="renderHistChart()"> 出站</label>
+      <select id="histRange" onchange="loadHistModal()"></select>
+    </div>
+    <div class="chart-wrap" style="height:320px"><canvas id="histChart"></canvas></div>
+    <div class="btn-row" style="margin-top:14px">
+      <button onclick="closeHistModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -977,6 +1084,12 @@ const esc = (s) => String(s ?? "")
 let machines = [];
 let selected = null;
 let chart;
+let histChart;
+let chartMode = "day";       // day | month  （总览）
+let histMode = "day";        // day | month  （单机弹窗）
+let mainPoints = [];         // 总览聚合点
+let histPoints = [];         // 单机聚合点
+let histMid = null;
 
 function switchTab(name) {
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
@@ -1065,6 +1178,14 @@ function renderTable() {
 
     const tdOps = document.createElement("td");
     tdOps.className = "ops";
+    const btnHist = document.createElement("button");
+    btnHist.type = "button";
+    btnHist.className = "sm green";
+    btnHist.textContent = "流量统计";
+    btnHist.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openHistModal(m.machine_id);
+    });
     const btnUp = document.createElement("button");
     btnUp.type = "button";
     btnUp.className = "sm primary";
@@ -1081,6 +1202,7 @@ function renderTable() {
       e.stopPropagation();
       deleteMachineRow(m.machine_id);
     });
+    tdOps.appendChild(btnHist);
     tdOps.appendChild(btnUp);
     tdOps.appendChild(btnDel);
     tr.appendChild(tdOps);
@@ -1089,47 +1211,198 @@ function renderTable() {
       if (e.target.closest("button")) return;
       selected = m.machine_id;
       renderTable();
-      loadHistory();
     });
     tb.appendChild(tr);
   }
 }
 
+function fillRangeOptions(sel, mode) {
+  if (!sel) return;
+  const cur = sel.value;
+  const opts = mode === "month"
+    ? [["3","近 3 月"],["6","近 6 月"],["12","近 12 月"]]
+    : [["7","近 7 天"],["14","近 14 天"],["30","近 30 天"],["90","近 90 天"]];
+  sel.replaceChildren();
+  for (const [v, t] of opts) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = t;
+    sel.appendChild(o);
+  }
+  const def = mode === "month" ? "6" : "14";
+  sel.value = opts.some(x => x[0] === cur) ? cur : def;
+}
+
+function setChartMode(mode) {
+  chartMode = mode === "month" ? "month" : "day";
+  document.querySelectorAll("#modeSeg button").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === chartMode);
+  });
+  fillRangeOptions(document.getElementById("range"), chartMode);
+  loadHistory();
+}
+
+function setHistMode(mode) {
+  histMode = mode === "month" ? "month" : "day";
+  document.querySelectorAll("#histModeSeg button").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === histMode);
+  });
+  fillRangeOptions(document.getElementById("histRange"), histMode);
+  loadHistModal();
+}
+
+/** 堆叠柱：入站/出站分色叠成一根，高度=合计；勾选控制显示哪一层 */
+function buildStackedChart(canvas, points, opts) {
+  const showRx = opts.showRx !== false;
+  const showTx = opts.showTx !== false;
+  const title = opts.title || "";
+  const labels = (points || []).map(p => p.bucket);
+  const rx = (points || []).map(p => (Number(p.rx) || 0) / 1e9);
+  const tx = (points || []).map(p => (Number(p.tx) || 0) / 1e9);
+  const datasets = [];
+  if (showRx) {
+    datasets.push({
+      label: "入站 GB",
+      data: rx,
+      backgroundColor: "rgba(96,165,250,0.85)",
+      borderColor: "#60a5fa",
+      borderWidth: 1,
+      borderRadius: 3,
+      stack: "t",
+    });
+  }
+  if (showTx) {
+    datasets.push({
+      label: "出站 GB",
+      data: tx,
+      backgroundColor: "rgba(52,211,153,0.85)",
+      borderColor: "#34d399",
+      borderWidth: 1,
+      borderRadius: 3,
+      stack: "t",
+    });
+  }
+  if (!datasets.length) {
+    datasets.push({
+      label: "无筛选",
+      data: labels.map(() => 0),
+      backgroundColor: "rgba(100,116,139,0.3)",
+      stack: "t",
+    });
+  }
+  return new Chart(canvas, {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      datasets: { bar: { categoryPercentage: 0.65, barPercentage: 0.9, maxBarThickness: 36 } },
+      scales: {
+        x: {
+          stacked: true,
+          ticks: { maxTicksLimit: 14, color: "#8aa0c6", maxRotation: 0, autoSkip: true },
+          grid: { display: false },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          ticks: { color: "#8aa0c6" },
+          grid: { color: "#1e2a42" },
+          title: { display: true, text: "GB", color: "#8aa0c6" },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#c7d2fe" } },
+        title: { display: !!title, text: title, color: "#e8eefc" },
+        tooltip: {
+          callbacks: {
+            footer: (items) => {
+              const sum = items.reduce((a, it) => a + (Number(it.parsed.y) || 0), 0);
+              return "合计 " + sum.toFixed(3) + " GB";
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderMainChart() {
+  const ctx = document.getElementById("chart");
+  if (!ctx) return;
+  if (chart) chart.destroy();
+  const showRx = document.getElementById("chkRx").checked;
+  const showTx = document.getElementById("chkTx").checked;
+  chart = buildStackedChart(ctx, mainPoints, {
+    showRx, showTx,
+    title: "全部机器 · " + (chartMode === "month" ? "月累计" : "日累计"),
+  });
+}
+
+function renderHistChart() {
+  const ctx = document.getElementById("histChart");
+  if (!ctx) return;
+  if (histChart) histChart.destroy();
+  const showRx = document.getElementById("histChkRx").checked;
+  const showTx = document.getElementById("histChkTx").checked;
+  histChart = buildStackedChart(ctx, histPoints, {
+    showRx, showTx,
+    title: (histMid || "") + " · " + (histMode === "month" ? "月累计" : "日累计"),
+  });
+}
 
 async function loadHistory() {
-  if (!selected) return;
-  const hours = document.getElementById("range").value;
-  const data = await api("/api/history?mid=" + encodeURIComponent(selected) + "&hours=" + hours);
-  const pts = data.points || [];
-  const labels = pts.map(p => { const d = new Date(p.ts*1000); return d.toLocaleString(); });
-  const rx = pts.map(p => (Number(p.today_rx)||0)/1e9);
-  const tx = pts.map(p => (Number(p.today_tx)||0)/1e9);
-  const total = pts.map((p,i) => rx[i]+tx[i]);
-  const ctx = document.getElementById("chart");
-  if (chart) chart.destroy();
-  chart = new Chart(ctx, {
-    type: "bar",
-    data: { labels, datasets: [
-      { label: "今日入站 GB", data: rx, backgroundColor: "rgba(96,165,250,0.75)", borderColor: "#60a5fa", borderWidth: 1, borderRadius: 4, borderSkipped: false },
-      { label: "今日出站 GB", data: tx, backgroundColor: "rgba(52,211,153,0.75)", borderColor: "#34d399", borderWidth: 1, borderRadius: 4, borderSkipped: false },
-      { label: "今日合计 GB", data: total, backgroundColor: "rgba(251,191,36,0.75)", borderColor: "#fbbf24", borderWidth: 1, borderRadius: 4, borderSkipped: false },
-    ]},
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-      datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.85, maxBarThickness: 28 } },
-      scales: {
-        x: { ticks: { maxTicksLimit: 12, color: "#8aa0c6", maxRotation: 0, autoSkip: true }, grid: { color: "#1e2a42", display: false } },
-        y: { beginAtZero: true, ticks: { color: "#8aa0c6" }, grid: { color: "#1e2a42" }, title: { display: true, text: "GB", color: "#8aa0c6" } }
-      },
-      plugins: { legend: { labels: { color: "#c7d2fe" } }, title: { display: true, text: selected, color: "#e8eefc" } } }
+  try {
+    const span = document.getElementById("range").value || (chartMode === "month" ? "6" : "14");
+    const q = "/api/history?mode=" + chartMode + "&span=" + encodeURIComponent(span);
+    const data = await api(q);
+    mainPoints = (data && data.points) || [];
+    renderMainChart();
+  } catch (e) {
+    toast("加载统计失败：" + (e && e.message ? e.message : String(e)));
+  }
+}
+
+function openHistModal(mid) {
+  histMid = mid;
+  histMode = chartMode;
+  document.getElementById("histModalTitle").textContent = "流量统计 · " + mid;
+  document.getElementById("histModalDesc").textContent = "该机器日/月累计；柱高=入站+出站，分色堆叠";
+  document.querySelectorAll("#histModeSeg button").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === histMode);
   });
+  fillRangeOptions(document.getElementById("histRange"), histMode);
+  document.getElementById("histChkRx").checked = document.getElementById("chkRx").checked;
+  document.getElementById("histChkTx").checked = document.getElementById("chkTx").checked;
+  document.getElementById("histModal").classList.add("open");
+  loadHistModal();
+}
+
+function closeHistModal() {
+  document.getElementById("histModal").classList.remove("open");
+  if (histChart) { histChart.destroy(); histChart = null; }
+  histMid = null;
+}
+
+async function loadHistModal() {
+  if (!histMid) return;
+  try {
+    const span = document.getElementById("histRange").value || (histMode === "month" ? "6" : "14");
+    const q = "/api/history?mode=" + histMode + "&span=" + encodeURIComponent(span)
+      + "&mid=" + encodeURIComponent(histMid);
+    const data = await api(q);
+    histPoints = (data && data.points) || [];
+    renderHistChart();
+  } catch (e) {
+    toast("加载单机统计失败：" + (e && e.message ? e.message : String(e)));
+  }
 }
 
 async function refresh() {
   try {
     const data = await api("/api/machines");
     machines = (data && data.machines) || [];
-    if (!selected && machines[0]) selected = machines[0].machine_id;
-    if (selected && !machines.find(m => m.machine_id === selected)) selected = machines[0]?.machine_id || null;
+    if (selected && !machines.find(m => m.machine_id === selected)) selected = null;
     renderSummary();
     renderTable();
     await loadHistory();
@@ -1397,10 +1670,14 @@ document.getElementById("modalVps").addEventListener("click", e => {
 document.getElementById("modalUpdate").addEventListener("click", e => {
   if (e.target === e.currentTarget) closeUpdateVps();
 });
+document.getElementById("histModal").addEventListener("click", e => {
+  if (e.target === e.currentTarget) closeHistModal();
+});
 document.getElementById("vpsMid").addEventListener("keydown", e => {
   if (e.key === "Enter") genCmd();
 });
 
+fillRangeOptions(document.getElementById("range"), chartMode);
 refresh();
 </script>`;
 }
@@ -1488,13 +1765,20 @@ export default {
       return json({ ok: true, machines: await listMachines(env) });
     }
 
-    // GET /api/history
+    // GET /api/history — mode=day|month, span=天数/月数, mid 可选（空=全部合计）
     if (req.method === "GET" && url.pathname === "/api/history") {
       if (!env.DB) return json({ ok: true, points: [] });
       const mid = String(url.searchParams.get("mid") || "").trim();
-      const hours = Math.min(24 * 90, Math.max(1, Number(url.searchParams.get("hours") || 168)));
-      if (!isValidMachineId(mid)) return json({ ok: false, error: "mid invalid" }, 400);
-      return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
+      const mode = String(url.searchParams.get("mode") || "day").toLowerCase() === "month" ? "month" : "day";
+      const span = Number(url.searchParams.get("span") || url.searchParams.get("hours") || (mode === "month" ? 6 : 14));
+      if (mid && !isValidMachineId(mid)) return json({ ok: false, error: "mid invalid" }, 400);
+      // 兼容旧 hours 参数：有 mid 且无 mode 时仍可返回原始点
+      if (mid && url.searchParams.has("hours") && !url.searchParams.has("mode") && !url.searchParams.has("span")) {
+        const hours = Math.min(24 * 90, Math.max(1, Number(url.searchParams.get("hours") || 168)));
+        return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
+      }
+      const agg = await getHistoryAgg(env, { mid: mid || null, mode, span });
+      return json({ ok: true, ...agg });
     }
 
     // GET /api/config / POST /api/config

@@ -135,7 +135,7 @@ Cloudflare Dashboard → 你的 Worker `cf-tg-web` → **设置** → **变量**
 | `PASSWORD` | 看板登录密码 | 访问 Web 看板必填 |
 | `TG_BOT_TOKEN` | Bot Token（可选） | 页面未填时用于 TG 汇总 |
 | `TG_ID` | Chat ID（可选） | 页面未填时用于 TG 汇总 |
-| `TG_TOKEN` | 任意长字符串（可选） | 兼容旧版全局上报密码；新版 VPS 用独立 token |
+| ~~`TG_TOKEN`~~ | — | 已废弃。每台 VPS 用独立 `access_token`，不再需要全局密码 |
 
 加完后**无需再部署**——加密变量保存即对线上 Worker 立即生效。
 
@@ -168,13 +168,13 @@ https://cf-tg-web.你的子域.workers.dev/
 
 ```bash
 m_id='香港-1' \
-cf_token='vps-独立token' \
+access_token='看板生成的访问密钥' \
 cf_url='https://cf-tg-web.xxx.workers.dev/api/report' \
 cf_time='0 * * * *' \
   bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')
 ```
 
-> 命令**不含** `t_token`/`t_id`：VPS 只上报 Cloudflare；TG 汇总由看板统一发送。
+> 命令**不含** `t_token`/`t_id`：VPS 用 `access_token` 上报 Cloudflare；TG 汇总由看板统一发送。
 
 在 Debian 13 上粘贴执行即可。
 
@@ -194,9 +194,10 @@ cf_time='0 * * * *' \
 |------|------|-------------|
 | `t_token` | Telegram Bot Token | 仅 TG 日报需要 |
 | `t_id` | Telegram Chat ID | 仅 TG 日报需要 |
+| `access_token` | VPS 访问密钥 | 看板生成；VPS 上报与回调校验都用它 |
 | `t_time` | TG 日报时间 `HH:MM:SS` | `20:00:00` |
 | `cf_url` | Worker 上报地址 `https://.../api/report` | 看板生成 |
-| `cf_token` | 上报 Bearer Token | 看板为每台 VPS 生成独立 token |
+| `access_token` | 上报与回调的访问密钥 | 看板「添加 VPS」生成，VPS 用它上报/验证 |
 | `cf_time` | CF 上报 cron（5 段） | `0 * * * *` |
 | `m_id` | 机器 ID（支持中文，1-64 字） | 看板添加时输入 |
 

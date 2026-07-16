@@ -12,7 +12,7 @@
  *   3. 绑定 D1：变量名必须是 DB
  *   4. 加密变量：PASSWORD（看板密码，必填）
  *                 TG_ID / TG_BOT_TOKEN（TG 汇总，可选；页面未填时使用）
- *                 TG_TOKEN（旧版全局上报密码，可选；新版用 VPS 独立 token）
+ *                 每台 VPS 用看板生成的独立 access_token 上报/回调（不再用全局 TG_TOKEN）
  *   5. 再部署一次使绑定生效
  */
 
@@ -126,15 +126,6 @@ function randomNonce(len = 16) {
 
 function bashSingleQuote(s) {
   return String(s).replace(/'/g, `'\''`);
-}
-
-function reportAuth(req, env) {
-  const h = req.headers.get("authorization") || "";
-  const m = /^Bearer\s+(.+)$/i.exec(h);
-  if (!env.TG_TOKEN || !m) return false;
-  const got = String(m[1] || "").replace(/\r/g, "").trim();
-  const exp = String(env.TG_TOKEN || "").replace(/\r/g, "").trim();
-  return !!(got && exp && got === exp);
 }
 
 /** 从请求取出 Bearer token（已 trim） */
@@ -490,7 +481,7 @@ async function getOrCreateVpsToken(env, mid) {
   return token;
 }
 
-/** 写入/覆盖某机 token（上报成功时同步，保证获取流量与 CF_TOKEN 一致） */
+/** 写入/覆盖某机 access_token（上报成功时同步，保证获取流量一致） */
 async function upsertVpsToken(env, mid, token) {
   if (!env.DB || !mid || !token) return;
   const tok = String(token).replace(/\r/g, "").trim();
@@ -548,12 +539,12 @@ async function deleteMachine(env, mid) {
   ]);
 }
 
-function buildInstallCommand(mid, vpsToken, cf_url, cf_time) {
+function buildInstallCommand(mid, accessToken, cf_url, cf_time) {
   const midQ = bashSingleQuote(mid);
   const timeQ = bashSingleQuote(cf_time || "0 * * * *");
   return [
     "m_id='" + midQ + "' \\",
-    "cf_token='" + vpsToken + "' \\",
+    "access_token='" + accessToken + "' \\",
     "cf_url='" + cf_url + "' \\",
     "cf_time='" + timeQ + "' \\",
     "  bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh')",
@@ -598,7 +589,7 @@ async function generateCommand(env, request, rawMid) {
 
 /**
  * 更新注册：复用/编辑参数后生成安装升级命令
- * body: { machine_id, cf_token?, cf_url?, cf_time?, rotate_token? }
+ * body: { machine_id, access_token?, cf_url?, cf_time?, rotate_token? }
  */
 async function generateUpdateCommand(env, request, body) {
   const mid = String((body && body.machine_id) || "").trim();
@@ -627,11 +618,11 @@ async function generateUpdateCommand(env, request, body) {
     if (body && body.rotate_token) {
       vpsToken = await rotateVpsToken(env, mid);
     } else {
-      const provided = String((body && body.cf_token) || "").trim();
+      const provided = String((body && body.access_token) || "").trim();
       const existing = await getVpsTokenFull(env, mid);
       if (provided) {
         if (!/^[A-Za-z0-9._~+/-]{8,256}$/.test(provided)) {
-          return { ok: false, error: "cf_token 格式无效" };
+          return { ok: false, error: "access_token 格式无效" };
         }
         const now = Math.floor(Date.now() / 1000);
         await env.DB.prepare(
@@ -672,18 +663,10 @@ async function getMachineReg(env, request, mid) {
   ).bind(mid).first();
   const cfg = await getConfig(env);
   const url = new URL(request.url);
+  // 统一使用 per-machine access_token；没有就生成。不再回退全局 TG_TOKEN。
   let token = await getVpsTokenFull(env, mid);
   if (token) token = String(token).replace(/\r/g, "").trim();
-  if (!token) {
-    // 无独立 token 时不急着生成新的：先展示全局 TG_TOKEN（若有），避免更新命令与现网 CF_TOKEN 脱节
-    const g = String(env.TG_TOKEN || "").replace(/\r/g, "").trim();
-    if (g) {
-      token = g;
-      try { await upsertVpsToken(env, mid, g); } catch { /* ignore */ }
-    } else {
-      token = await getOrCreateVpsToken(env, mid);
-    }
-  }
+  if (!token) token = await getOrCreateVpsToken(env, mid);
   return {
     ok: true,
     machine_id: mid,
@@ -691,7 +674,7 @@ async function getMachineReg(env, request, mid) {
     interface: (row && row.interface) || "",
     last_ts: (row && row.last_ts) || 0,
     exists: !!row,
-    cf_token: token,
+    access_token: token,
     cf_url: url.origin + "/api/report",
     cf_time: cfg.cf_time || "0 * * * *",
   };
@@ -1001,16 +984,12 @@ async function forceReportPushAll(env) {
   const rows = results || [];
   const targets = [];
   const skipped = [];
-  const globalTok = String(env.TG_TOKEN || "").replace(/\r/g, "").trim();
+  // 统一用 access_token（vps_tokens）。不再回退全局 TG_TOKEN。
   for (const r of rows) {
     const mid = r.machine_id;
     const cb = (r.callback_url || "").trim();
-    const vpsTok = String(r.token || "").replace(/\r/g, "").trim();
-    // 候选密钥：per-machine + 全局 TG_TOKEN（去重）。历史上上报可用 TG_TOKEN、
-    // 推送却只用旧 vps_tokens，导致 401；这里两种都试。
-    const tokens = [];
-    if (vpsTok) tokens.push(vpsTok);
-    if (globalTok && globalTok !== vpsTok) tokens.push(globalTok);
+    const accessToken = String(r.token || "").replace(/\r/g, "").trim();
+    const tokens = accessToken ? [accessToken] : [];
     if (!isValidCallbackUrl(cb)) {
       skipped.push({ machine_id: mid, reason: "no_callback_url" });
       continue;
@@ -1457,7 +1436,7 @@ td.ops button{margin-right:4px}
     <p class="desc">复用该机器已有参数（可编辑）。确定后生成升级/重装命令，在 VPS 上执行即可更新脚本。</p>
     <label for="upMid">机器 ID</label>
     <input id="upMid" type="text" autocomplete="off">
-    <label for="upToken">cf_token（注册密钥）</label>
+    <label for="upToken">access_token（访问密钥）</label>
     <input id="upToken" type="text" autocomplete="off" spellcheck="false">
     <label for="upUrl">cf_url</label>
     <input id="upUrl" type="text" autocomplete="off" spellcheck="false">
@@ -2020,7 +1999,7 @@ function reasonLabel(state, detail, status) {
       return d.slice(0, 160);
     }
     if (/token length mismatch|token mismatch|missing bearer|unauthorized/i.test(d)) {
-      return "鉴权失败：VPS 的 CF_TOKEN 与看板 vps_tokens/TG_TOKEN 都不匹配。部署最新 Worker 后会自动双密钥重试；仍失败请用看板「更新注册」整段重装 · " + d.slice(0, 80);
+      return "鉴权失败：VPS 的 access_token 与看板不一致。用看板「更新注册」复制完整命令在 VPS 重装，两边 access_token 即统一 · " + d.slice(0, 80);
     }
     if (/bad signature/i.test(d)) {
       return "HMAC 签名不匹配（token 可能一致但 body/时间戳异常）· " + d.slice(0, 80);
@@ -2263,7 +2242,7 @@ async function openUpdateVps(mid) {
       return;
     }
     document.getElementById("upMid").value = data.machine_id || mid;
-    document.getElementById("upToken").value = data.cf_token || "";
+    document.getElementById("upToken").value = data.access_token || "";
     document.getElementById("upUrl").value = data.cf_url || "";
     document.getElementById("upTime").value = data.cf_time || "0 * * * *";
   } catch (e) {
@@ -2278,7 +2257,7 @@ function closeUpdateVps() {
 
 async function confirmUpdateVps() {
   const machine_id = document.getElementById("upMid").value.trim();
-  const cf_token = document.getElementById("upToken").value.trim();
+  const access_token = document.getElementById("upToken").value.trim();
   const cf_url = document.getElementById("upUrl").value.trim();
   const cf_time = document.getElementById("upTime").value.trim();
   const rotate_token = document.getElementById("upRotate").checked;
@@ -2288,7 +2267,7 @@ async function confirmUpdateVps() {
   try {
     const data = await api("/api/generate-update", {
       method: "POST",
-      body: JSON.stringify({ machine_id, cf_token, cf_url, cf_time, rotate_token }),
+      body: JSON.stringify({ machine_id, access_token, cf_url, cf_time, rotate_token }),
     });
     if (!data || !data.ok) {
       toast(data?.error || "生成失败");
@@ -2296,7 +2275,7 @@ async function confirmUpdateVps() {
     }
     document.getElementById("upOk").textContent = "✓ 更新命令已生成（密钥：" + (data.token_preview || "") + "）";
     document.getElementById("upCmd").textContent = data.command;
-    document.getElementById("upToken").value = data.token || cf_token;
+    document.getElementById("upToken").value = data.token || access_token;
     document.getElementById("upCmdRegion").style.display = "block";
     document.getElementById("upBtnRegion").style.display = "none";
     toast("命令已生成，复制到 VPS 执行即可升级脚本");
@@ -2433,16 +2412,10 @@ export default {
         return json({ ok: false, error: "machine_id invalid" }, 400);
       }
 
-      // 鉴权：全局 TG_TOKEN 或该机 vps_tokens；通过后把实际 Bearer 写回 vps_tokens
-      // （避免「上报用全局 token 成功、获取流量用旧 vps token 失败」）
+      // 鉴权：只认该机 access_token（vps_tokens）
       const bearer = extractBearer(req);
-      const okGlobal = reportAuth(req, env);
-      const okVps = bearer ? await verifyVpsToken(env, mid, bearer) : false;
-      if (!okGlobal && !okVps) {
+      if (!bearer || !(await verifyVpsToken(env, mid, bearer))) {
         return json({ ok: false, error: "unauthorized" }, 401);
-      }
-      if (bearer) {
-        try { await upsertVpsToken(env, mid, bearer); } catch { /* ignore sync fail */ }
       }
 
       await upsertReport(env, { ...body, machine_id: mid });
@@ -2478,12 +2451,9 @@ export default {
       if (!env.DB) return json({ ok: true, force_report: false });
       const mid = String(req.headers.get("x-machine-id") || url.searchParams.get("mid") || "").trim();
       if (!isValidMachineId(mid)) return json({ ok: false, error: "machine_id invalid" }, 400);
-      const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-      const okGlobal = reportAuth(req, env);
-      if (!okGlobal) {
-        if (!token || !(await verifyVpsToken(env, mid, token))) {
-          return json({ ok: false, error: "unauthorized" }, 401);
-        }
+      const token = extractBearer(req);
+      if (!token || !(await verifyVpsToken(env, mid, token))) {
+        return json({ ok: false, error: "unauthorized" }, 401);
       }
       const force_report = await agentShouldForceReport(env, mid);
       return json({ ok: true, force_report, machine_id: mid });

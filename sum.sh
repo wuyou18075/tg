@@ -56,7 +56,7 @@ validate_m_id() {
   [[ "${id}" != *"'"* && "${id}" != *'"'* && "${id}" != */* && "${id}" != *\\* ]] || return 1
   return 0
 }
-validate_cf_token() { [[ "$1" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; }
+validate_access_token() { [[ "$1" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]]; }
 validate_cb_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1024 && $1 <= 65535 )); }
 validate_callback_url() {
   [[ "$1" == http://* || "$1" == https://* ]] || return 1
@@ -85,12 +85,12 @@ resolve_t_time() {
   printf '%s' "${val}"
 }
 
-# CF 可选：cf_url + cf_token + m_id 都提供才启用 CF 上报
+# CF 可选：cf_url + access_token + m_id 都提供才启用 CF 上报
 resolve_m_id() {
   local val="${m_id:-}"
   if [[ -z "${val}" ]]; then
     # 仅 CF 模式需要交互输入；纯 TG 模式可无
-    if [[ -n "${cf_url:-}" || -n "${cf_token:-}" ]]; then
+    if [[ -n "${cf_url:-}" || -n "${access_token:-}" ]]; then
       read -r -p '请输入机器 ID（如 hk-1）: ' val
     else
       printf ''
@@ -101,8 +101,8 @@ resolve_m_id() {
   validate_m_id "${val}" || die "机器 ID 应为 1-64 字，支持中英文、数字及 ._-:（如 香港-1 / hk-1）。"
   printf '%s' "${val}"
 }
-resolve_cf_token() {
-  local val="${cf_token:-}"
+resolve_access_token() {
+  local val="${access_token:-}"
   if [[ -z "${val}" ]]; then
     if [[ -n "${cf_url:-}" || -n "${m_id:-}" ]]; then
       read -r -s -p '请输入 CF 上报 Token: ' val; printf '\n'
@@ -113,13 +113,13 @@ resolve_cf_token() {
   fi
   [[ -z "${val}" ]] && printf '' && return 0
   val="$(printf '%s' "${val}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  validate_cf_token "${val}" || die 'cf_token 格式无效。'
+  validate_access_token "${val}" || die 'access_token 格式无效。'
   printf '%s' "${val}"
 }
 resolve_cf_url() {
   local val="${cf_url:-}"
   if [[ -z "${val}" ]]; then
-    if [[ -n "${cf_token:-}" || -n "${m_id:-}" ]]; then
+    if [[ -n "${access_token:-}" || -n "${m_id:-}" ]]; then
       read -r -p '请输入 CF Worker 上报地址（https://...）: ' val
     else
       printf ''
@@ -160,7 +160,7 @@ detect_callback_url() {
 resolve_cf_time() {
   local val="${cf_time:-0 * * * *}"
   # 未启用 CF 时允许空/默认，不强制校验失败路径
-  if [[ -z "${cf_url:-}" && -z "${cf_token:-}" && -z "${m_id:-}" ]]; then
+  if [[ -z "${cf_url:-}" && -z "${access_token:-}" && -z "${m_id:-}" ]]; then
     printf '%s' "${val}"
     return 0
   fi
@@ -231,16 +231,16 @@ configure_vnstat() {
 }
 
 write_config() {
-  local ifname="$1" m_id="$2" cf_token="$3" cf_url="$4" tg_token="$5" tg_cid="$6" cb_url="${7:-}" cb_port="${8:-}"
+  local ifname="$1" m_id="$2" access_token="$3" cf_url="$4" tg_token="$5" tg_cid="$6" cb_url="${7:-}" cb_port="${8:-}"
   local tmp; tmp="$(mktemp)"; chmod 600 "${tmp}"
   {
     printf 'INTERFACE=%s\n' "${ifname}"
     if [[ -n "${m_id}" ]]; then
       printf 'MACHINE_ID=%s\n' "${m_id}"
     fi
-    if [[ -n "${cf_token}" && -n "${cf_url}" ]]; then
+    if [[ -n "${access_token}" && -n "${cf_url}" ]]; then
       # 去掉首尾空白与 \r，避免 Windows 复制/换行导致回调 Bearer 校验失败
-      printf 'CF_TOKEN=%s\n' "$(printf '%s' "${cf_token}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      printf 'ACCESS_TOKEN=%s\n' "$(printf '%s' "${access_token}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       printf 'CF_URL=%s\n' "$(printf '%s' "${cf_url}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     fi
     if [[ -n "${cb_url}" ]]; then
@@ -268,7 +268,7 @@ TG_BOT_TOKEN=""
 TG_CHAT_ID=""
 INTERFACE=""
 CF_URL=""
-CF_TOKEN=""
+ACCESS_TOKEN=""
 MACHINE_ID=""
 CALLBACK_URL=""
 CB_PORT="19840"
@@ -283,7 +283,7 @@ load_config() {
       TG_CHAT_ID)   TG_CHAT_ID="${val}"   ;;
       INTERFACE)    INTERFACE="${val}"     ;;
       CF_URL)       CF_URL="${val}"        ;;
-      CF_TOKEN)     CF_TOKEN="${val}"      ;;
+      ACCESS_TOKEN)     ACCESS_TOKEN="${val}"      ;;
       MACHINE_ID)   MACHINE_ID="${val}"    ;;
       CALLBACK_URL) CALLBACK_URL="${val}"  ;;
       CB_PORT)      CB_PORT="${val}"       ;;
@@ -381,15 +381,15 @@ ${title}
 
 # ─── CF 上报（可选） ───
 send_cf() {
-  [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]] || {
-    log_error "CF 未配置（需要 CF_URL / CF_TOKEN / MACHINE_ID）。"; return 1; }
+  [[ -n "${CF_URL}" && -n "${ACCESS_TOKEN}" && -n "${MACHINE_ID}" ]] || {
+    log_error "CF 未配置（需要 CF_URL / ACCESS_TOKEN / MACHINE_ID）。"; return 1; }
   if [[ -z "${MACHINE_ID}" || ${#MACHINE_ID} -gt 64 ]]; then
     log_error "MACHINE_ID 格式无效。"; return 1
   fi
   if [[ "${MACHINE_ID}" == *[[:space:]]* || "${MACHINE_ID}" == *"'"* || "${MACHINE_ID}" == *'"'* || "${MACHINE_ID}" == */* || "${MACHINE_ID}" == *\\* ]]; then
     log_error "MACHINE_ID 格式无效。"; return 1
   fi
-  [[ "${CF_TOKEN}" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]] || { log_error "CF_TOKEN 格式无效。"; return 1; }
+  [[ "${ACCESS_TOKEN}" =~ ^[A-Za-z0-9._~+/-]{8,256}$ ]] || { log_error "ACCESS_TOKEN 格式无效。"; return 1; }
   local payload="$(jq -nc \
     --arg m_id "${MACHINE_ID}" \
     --arg host "$(hostname)" \
@@ -415,7 +415,7 @@ send_cf() {
     --connect-timeout 10 --max-time 30 --retry 2 \
     --request POST \
     --header "Content-Type: application/json" \
-    --header "Authorization: Bearer ${CF_TOKEN}" \
+    --header "Authorization: Bearer ${ACCESS_TOKEN}" \
     --header "X-Machine-Id: ${MACHINE_ID}" \
     --data "${payload}" \
     "${CF_URL}")" || { log_error "CF 上报失败。"; return 1; }
@@ -444,7 +444,7 @@ main() {
     --cf)        run_cf ;;
     "")
       if [[ -n "${TG_BOT_TOKEN}" && -n "${TG_CHAT_ID}" ]]; then run_tg; fi
-      if [[ -n "${CF_URL}" && -n "${CF_TOKEN}" && -n "${MACHINE_ID}" ]]; then run_cf; fi
+      if [[ -n "${CF_URL}" && -n "${ACCESS_TOKEN}" && -n "${MACHINE_ID}" ]]; then run_cf; fi
       ;;
     *)           log_error "未知参数：${1}"; return 1 ;;
   esac
@@ -486,118 +486,119 @@ XQpOT05DRV9ESVIgPSBQYXRoKCIvcnVuL3RyYWZmaWMtdGVsZWdyYW0tcmVwb3J0LW5vbmNlcyIp
 CgpkZWYgbG9nKG1zZzogc3RyKSAtPiBOb25lOgogICAgdHJ5OgogICAgICAgIHN5cy5zdGRlcnIu
 d3JpdGUodGltZS5zdHJmdGltZSgiJVktJW0tJWQgJUg6JU06JVMgIikgKyBtc2cgKyAiXG4iKQog
 ICAgICAgIHN5cy5zdGRlcnIuZmx1c2goKQogICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICBw
-YXNzCgpkZWYgbG9hZF9jZl90b2tlbigpIC0+IHN0cjoKICAgICIiIuavj+asoeivt+axguS7jiBj
-b25mIOivu+WPlu+8jOmBv+WFjemHjeijheWQjuacjeWKoeacqumHjeWQr+S7jeeUqOaXpyB0b2tl
-buOAgiIiIgogICAgaWYgbm90IENPTkZJRy5pc19maWxlKCk6CiAgICAgICAgcmV0dXJuICIiCiAg
-ICB0b2tlbiA9ICIiCiAgICB0cnk6CiAgICAgICAgdGV4dCA9IENPTkZJRy5yZWFkX3RleHQoZW5j
-b2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJyZXBsYWNlIikKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMg
-ZToKICAgICAgICBsb2coInJlYWQgY29uZiBmYWlsZWQ6ICIgKyBzdHIoZSkpCiAgICAgICAgcmV0
-dXJuICIiCiAgICBmb3IgbGluZSBpbiB0ZXh0LnNwbGl0bGluZXMoKToKICAgICAgICBsaW5lID0g
-bGluZS5yZXBsYWNlKCJcciIsICIiKS5zdHJpcCgpCiAgICAgICAgaWYgbm90IGxpbmUgb3IgbGlu
-ZS5zdGFydHN3aXRoKCIjIikgb3IgIj0iIG5vdCBpbiBsaW5lOgogICAgICAgICAgICBjb250aW51
-ZQogICAgICAgIGtleSwgXywgdmFsID0gbGluZS5wYXJ0aXRpb24oIj0iKQogICAgICAgIGtleSA9
-IGtleS5zdHJpcCgpCiAgICAgICAgdmFsID0gdmFsLnN0cmlwKCkuc3RyaXAoIiciKS5zdHJpcCgn
-IicpCiAgICAgICAgaWYga2V5ID09ICJDRl9UT0tFTiI6CiAgICAgICAgICAgIHRva2VuID0gdmFs
-CiAgICByZXR1cm4gdG9rZW4KCmRlZiBzZWVuX25vbmNlKG46IHN0cikgLT4gYm9vbDoKICAgIE5P
-TkNFX0RJUi5ta2RpcihwYXJlbnRzPVRydWUsIGV4aXN0X29rPVRydWUpCiAgICBub3cgPSB0aW1l
-LnRpbWUoKQogICAgZm9yIGYgaW4gbGlzdChOT05DRV9ESVIuaXRlcmRpcigpKToKICAgICAgICB0
-cnk6CiAgICAgICAgICAgIGlmIG5vdyAtIGYuc3RhdCgpLnN0X210aW1lID4gMzAwOgogICAgICAg
-ICAgICAgICAgZi51bmxpbmsobWlzc2luZ19vaz1UcnVlKQogICAgICAgIGV4Y2VwdCBFeGNlcHRp
-b246CiAgICAgICAgICAgIHBhc3MKICAgIHAgPSBOT05DRV9ESVIgLyBuCiAgICBpZiBwLmV4aXN0
-cygpOgogICAgICAgIHJldHVybiBUcnVlCiAgICBwLndyaXRlX3RleHQoIjEiKQogICAgcmV0dXJu
-IEZhbHNlCgpkZWYgc2VuZF9yZXNwKGNvbm4sIGNvZGU6IHN0ciwgbXNnOiBzdHIpIC0+IE5vbmU6
-CiAgICBiID0gbXNnLmVuY29kZSgpCiAgICB0cnk6CiAgICAgICAgY29ubi5zZW5kYWxsKAogICAg
-ICAgICAgICAoCiAgICAgICAgICAgICAgICBmIkhUVFAvMS4xIHtjb2RlfVxyXG4iCiAgICAgICAg
-ICAgICAgICBmIkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvblxyXG4iCiAgICAgICAgICAg
-ICAgICBmIkNvbm5lY3Rpb246IGNsb3NlXHJcbiIKICAgICAgICAgICAgICAgIGYiQ29udGVudC1M
-ZW5ndGg6IHtsZW4oYil9XHJcbiIKICAgICAgICAgICAgICAgIGYiXHJcbiIKICAgICAgICAgICAg
-KS5lbmNvZGUoKQogICAgICAgICAgICArIGIKICAgICAgICApCiAgICBleGNlcHQgRXhjZXB0aW9u
-IGFzIGU6CiAgICAgICAgbG9nKCJzZW5kX3Jlc3AgZmFpbGVkOiAiICsgc3RyKGUpKQoKZGVmIHJl
-Y3ZfYWxsX2hlYWRlcnMoY29ubiwgbGltaXQ9MTYzODQpOgogICAgZGF0YSA9IGIiIgogICAgd2hp
-bGUgYiJcclxuXHJcbiIgbm90IGluIGRhdGEgYW5kIGxlbihkYXRhKSA8IGxpbWl0OgogICAgICAg
-IHRyeToKICAgICAgICAgICAgY2h1bmsgPSBjb25uLnJlY3YoNDA5NikKICAgICAgICBleGNlcHQg
-c29ja2V0LnRpbWVvdXQ6CiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgaWYgbm90IGNodW5rOgog
-ICAgICAgICAgICBicmVhawogICAgICAgIGRhdGEgKz0gY2h1bmsKICAgIHJldHVybiBkYXRhCgpk
-ZWYgaGFuZGxlKGNvbm4pIC0+IE5vbmU6CiAgICBjb25uLnNldHRpbWVvdXQoMTUpCiAgICBkYXRh
-ID0gcmVjdl9hbGxfaGVhZGVycyhjb25uKQogICAgaWYgYiJcclxuXHJcbiIgbm90IGluIGRhdGE6
-CiAgICAgICAgc2VuZF9yZXNwKGNvbm4sICI0MDAgQmFkIFJlcXVlc3QiLCAneyJvayI6ZmFsc2Us
-ImVycm9yIjoiaW5jb21wbGV0ZSByZXF1ZXN0In0nKQogICAgICAgIGxvZygiaW5jb21wbGV0ZSBy
-ZXF1ZXN0IGxlbj0iICsgc3RyKGxlbihkYXRhKSkpCiAgICAgICAgcmV0dXJuCiAgICBoZWFkLCBf
-LCByZXN0ID0gZGF0YS5wYXJ0aXRpb24oYiJcclxuXHJcbiIpCiAgICBsaW5lcyA9IGhlYWQuZGVj
-b2RlKCJsYXRpbjEiLCAicmVwbGFjZSIpLnNwbGl0KCJcclxuIikKICAgIHJlcSA9IGxpbmVzWzBd
-LnNwbGl0KCkKICAgIGlmIGxlbihyZXEpIDwgMjoKICAgICAgICBzZW5kX3Jlc3AoY29ubiwgIjQw
-MCBCYWQgUmVxdWVzdCIsICd7Im9rIjpmYWxzZSwiZXJyb3IiOiJiYWQgcmVxdWVzdCBsaW5lIn0n
-KQogICAgICAgIHJldHVybgogICAgbWV0aG9kLCBwYXRoID0gcmVxWzBdLCByZXFbMV0KICAgIGhl
-YWRlcnMgPSB7fQogICAgZm9yIGxpbmUgaW4gbGluZXNbMTpdOgogICAgICAgIGlmICI6IiBpbiBs
-aW5lOgogICAgICAgICAgICBrLCB2ID0gbGluZS5zcGxpdCgiOiIsIDEpCiAgICAgICAgICAgIGhl
-YWRlcnNbay5zdHJpcCgpLmxvd2VyKCldID0gdi5zdHJpcCgpCiAgICB0cnk6CiAgICAgICAgY2xl
-biA9IGludChoZWFkZXJzLmdldCgiY29udGVudC1sZW5ndGgiKSBvciAwKQogICAgZXhjZXB0IFZh
-bHVlRXJyb3I6CiAgICAgICAgY2xlbiA9IDAKICAgIGlmIGNsZW4gPCAwIG9yIGNsZW4gPiA0MDk2
-OgogICAgICAgIHNlbmRfcmVzcChjb25uLCAiNDAwIEJhZCBSZXF1ZXN0IiwgJ3sib2siOmZhbHNl
-LCJlcnJvciI6ImJhZCBjb250ZW50LWxlbmd0aCJ9JykKICAgICAgICByZXR1cm4KICAgIGJvZHkg
-PSByZXN0CiAgICB3aGlsZSBsZW4oYm9keSkgPCBjbGVuOgogICAgICAgIHRyeToKICAgICAgICAg
-ICAgY2h1bmsgPSBjb25uLnJlY3YoY2xlbiAtIGxlbihib2R5KSkKICAgICAgICBleGNlcHQgc29j
-a2V0LnRpbWVvdXQ6CiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgaWYgbm90IGNodW5rOgogICAg
-ICAgICAgICBicmVhawogICAgICAgIGJvZHkgKz0gY2h1bmsKICAgIGJvZHkgPSBib2R5WzpjbGVu
-XQoKICAgIGlmIG1ldGhvZCAhPSAiUE9TVCIgb3IgcGF0aC5zcGxpdCgiPyIpWzBdICE9ICIvZm9y
-Y2UtcmVwb3J0IjoKICAgICAgICBzZW5kX3Jlc3AoY29ubiwgIjQwNCBOb3QgRm91bmQiLCAneyJv
-ayI6ZmFsc2UsImVycm9yIjoibm90IGZvdW5kIn0nKQogICAgICAgIHJldHVybgoKICAgIHRva2Vu
-ID0gbG9hZF9jZl90b2tlbigpCiAgICBpZiBub3QgdG9rZW46CiAgICAgICAgc2VuZF9yZXNwKGNv
-bm4sICI1MDAgSW50ZXJuYWwgU2VydmVyIEVycm9yIiwgJ3sib2siOmZhbHNlLCJlcnJvciI6Im5v
-IENGX1RPS0VOIGluIGNvbmYifScpCiAgICAgICAgbG9nKCJubyBDRl9UT0tFTiBpbiBjb25mIikK
-ICAgICAgICByZXR1cm4KCiAgICBhdXRoID0gaGVhZGVycy5nZXQoImF1dGhvcml6YXRpb24iLCAi
-IikKICAgIGlmIGF1dGgubG93ZXIoKS5zdGFydHN3aXRoKCJiZWFyZXIgIik6CiAgICAgICAgYXV0
-aCA9IGF1dGhbNzpdLnN0cmlwKCkKICAgIGF1dGggPSBhdXRoLnJlcGxhY2UoIlxyIiwgIiIpLnJl
-cGxhY2UoIlxuIiwgIiIpLnN0cmlwKCkuc3RyaXAoIiciKS5zdHJpcCgnIicpCgogICAgaWYgbm90
-IGF1dGg6CiAgICAgICAgc2VuZF9yZXNwKGNvbm4sICI0MDEgVW5hdXRob3JpemVkIiwgJ3sib2si
-OmZhbHNlLCJlcnJvciI6Im1pc3NpbmcgYmVhcmVyIn0nKQogICAgICAgIGxvZygibWlzc2luZyBi
-ZWFyZXIiKQogICAgICAgIHJldHVybgogICAgaWYgbGVuKGF1dGgpICE9IGxlbih0b2tlbik6CiAg
-ICAgICAgc2VuZF9yZXNwKAogICAgICAgICAgICBjb25uLAogICAgICAgICAgICAiNDAxIFVuYXV0
-aG9yaXplZCIsCiAgICAgICAgICAgICd7Im9rIjpmYWxzZSwiZXJyb3IiOiJ0b2tlbiBsZW5ndGgg
-bWlzbWF0Y2giLCJnb3QiOiVkLCJleHBlY3QiOiVkfScKICAgICAgICAgICAgJSAobGVuKGF1dGgp
-LCBsZW4odG9rZW4pKSwKICAgICAgICApCiAgICAgICAgbG9nKCJ0b2tlbiBsZW5ndGggbWlzbWF0
-Y2ggZ290PSVkIGV4cGVjdD0lZCIgJSAobGVuKGF1dGgpLCBsZW4odG9rZW4pKSkKICAgICAgICBy
-ZXR1cm4KICAgIGlmIG5vdCBobWFjLmNvbXBhcmVfZGlnZXN0KGF1dGgsIHRva2VuKToKICAgICAg
-ICBzZW5kX3Jlc3AoCiAgICAgICAgICAgIGNvbm4sCiAgICAgICAgICAgICI0MDEgVW5hdXRob3Jp
-emVkIiwKICAgICAgICAgICAgJ3sib2siOmZhbHNlLCJlcnJvciI6InRva2VuIG1pc21hdGNoIiwi
-Z290X3ByZWZpeCI6IiVzIiwiZXhwZWN0X3ByZWZpeCI6IiVzIn0nCiAgICAgICAgICAgICUgKGF1
-dGhbOjZdLCB0b2tlbls6Nl0pLAogICAgICAgICkKICAgICAgICBsb2coInRva2VuIG1pc21hdGNo
-IGdvdF9wcmVmaXg9JXMgZXhwZWN0X3ByZWZpeD0lcyIgJSAoYXV0aFs6Nl0sIHRva2VuWzo2XSkp
-CiAgICAgICAgcmV0dXJuCgogICAgIyBITUFDIOWPr+mAie+8muacieetvuWQjeWImeagoemqjO+8
-m+aXoOetvuWQjeaIluagoemqjOWksei0peaXtu+8jEJlYXJlciDlt7LpgJrov4fku43mjqXlj5fv
-vIjpgb/lhY3ml6cgV29ya2VyL+aXtumSn+mXrumimOWNoeatu++8iQogICAgdHMgPSBoZWFkZXJz
-LmdldCgieC10aW1lc3RhbXAiLCAiIikKICAgIG5vbmNlID0gaGVhZGVycy5nZXQoIngtbm9uY2Ui
-LCAiIikKICAgIHNpZyA9IGhlYWRlcnMuZ2V0KCJ4LXNpZ25hdHVyZSIsICIiKS5sb3dlcigpLnN0
-cmlwKCkKICAgIGlmIHRzIGFuZCBub25jZSBhbmQgc2lnOgogICAgICAgIGlmIHJlLmZ1bGxtYXRj
-aChyIlswLTldKyIsIHRzKSBhbmQgYWJzKGludCh0aW1lLnRpbWUoKSkgLSBpbnQodHMpKSA8PSAz
-MDA6CiAgICAgICAgICAgIGlmIHJlLmZ1bGxtYXRjaChyIltBLVphLXowLTkuXy1dezgsNjR9Iiwg
-bm9uY2UpIGFuZCBub3Qgc2Vlbl9ub25jZShub25jZSk6CiAgICAgICAgICAgICAgICBtc2cgPSBm
-Int0c31cbntub25jZX1cbiIuZW5jb2RlKCkgKyBib2R5CiAgICAgICAgICAgICAgICBleHBlY3Qg
-PSBobWFjLm5ldyh0b2tlbi5lbmNvZGUoInV0Zi04IiksIG1zZywgaGFzaGxpYi5zaGEyNTYpLmhl
-eGRpZ2VzdCgpCiAgICAgICAgICAgICAgICBpZiBub3QgaG1hYy5jb21wYXJlX2RpZ2VzdChleHBl
-Y3QsIHNpZyk6CiAgICAgICAgICAgICAgICAgICAgbG9nKCJobWFjIG1pc21hdGNoIChiZWFyZXIg
-b2ssIHN0aWxsIGFjY2VwdCkiKQogICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgbG9n
-KCJub25jZS90cyBza2lwIGhtYWMiKQogICAgICAgIGVsc2U6CiAgICAgICAgICAgIGxvZygidGlt
-ZXN0YW1wIHNrZXcgc2tpcCBobWFjIHN0cmljdCIpCgogICAgc2VuZF9yZXNwKGNvbm4sICIyMDAg
-T0siLCAneyJvayI6dHJ1ZSwiYWNjZXB0ZWQiOnRydWV9JykKICAgIHRyeToKICAgICAgICBzdWJw
-cm9jZXNzLlBvcGVuKAogICAgICAgICAgICBbUkVQT1JULCAiLS1jZiJdLAogICAgICAgICAgICBz
-dGRvdXQ9c3VicHJvY2Vzcy5ERVZOVUxMLAogICAgICAgICAgICBzdGRlcnI9c3VicHJvY2Vzcy5E
-RVZOVUxMLAogICAgICAgICAgICBzdGFydF9uZXdfc2Vzc2lvbj1UcnVlLAogICAgICAgICkKICAg
-ICAgICBsb2coImFjY2VwdGVkIGZvcmNlLXJlcG9ydCwgc3Bhd25lZCAtLWNmIikKICAgIGV4Y2Vw
-dCBFeGNlcHRpb24gYXMgZToKICAgICAgICBsb2coInNwYXduIHJlcG9ydCBmYWlsZWQ6ICIgKyBz
-dHIoZSkpCgpzcnYgPSBzb2NrZXQuc29ja2V0KHNvY2tldC5BRl9JTkVULCBzb2NrZXQuU09DS19T
-VFJFQU0pCnNydi5zZXRzb2Nrb3B0KHNvY2tldC5TT0xfU09DS0VULCBzb2NrZXQuU09fUkVVU0VB
-RERSLCAxKQpzcnYuYmluZCgoIjAuMC4wLjAiLCBwb3J0KSkKc3J2Lmxpc3RlbigzMikKbG9nKCJj
-YWxsYmFjayBsaXN0ZW5pbmcgcG9ydD0lZCBjb25mPSVzIiAlIChwb3J0LCBDT05GSUcpKQp3aGls
-ZSBUcnVlOgogICAgY29ubiwgYWRkciA9IHNydi5hY2NlcHQoKQogICAgdHJ5OgogICAgICAgIGhh
-bmRsZShjb25uKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIGxvZygiaGFuZGxl
-IGVycm9yIGZyb20gJXM6ICVzIiAlIChhZGRyLCBlKSkKICAgICAgICB0cnk6CiAgICAgICAgICAg
-IHNlbmRfcmVzcChjb25uLCAiNTAwIEludGVybmFsIFNlcnZlciBFcnJvciIsICd7Im9rIjpmYWxz
-ZSwiZXJyb3IiOiJpbnRlcm5hbCJ9JykKICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAg
-ICAgICBwYXNzCiAgICBmaW5hbGx5OgogICAgICAgIHRyeToKICAgICAgICAgICAgY29ubi5zaHV0
-ZG93bihzb2NrZXQuU0hVVF9SRFdSKQogICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAg
-ICAgIHBhc3MKICAgICAgICB0cnk6CiAgICAgICAgICAgIGNvbm4uY2xvc2UoKQogICAgICAgIGV4
-Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgIHBhc3MKUFlJTk5FUgp9CgptYWluICIkQCIK
+YXNzCgpkZWYgbG9hZF9hY2Nlc3NfdG9rZW4oKSAtPiBzdHI6CiAgICAiIiLmr4/mrKHor7fmsYLk
+u44gY29uZiDor7vlj5bvvIzpgb/lhY3ph43oo4XlkI7mnI3liqHmnKrph43lkK/ku43nlKjml6cg
+dG9rZW7jgIIiIiIKICAgIGlmIG5vdCBDT05GSUcuaXNfZmlsZSgpOgogICAgICAgIHJldHVybiAi
+IgogICAgdG9rZW4gPSAiIgogICAgdHJ5OgogICAgICAgIHRleHQgPSBDT05GSUcucmVhZF90ZXh0
+KGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0icmVwbGFjZSIpCiAgICBleGNlcHQgRXhjZXB0aW9u
+IGFzIGU6CiAgICAgICAgbG9nKCJyZWFkIGNvbmYgZmFpbGVkOiAiICsgc3RyKGUpKQogICAgICAg
+IHJldHVybiAiIgogICAgZm9yIGxpbmUgaW4gdGV4dC5zcGxpdGxpbmVzKCk6CiAgICAgICAgbGlu
+ZSA9IGxpbmUucmVwbGFjZSgiXHIiLCAiIikuc3RyaXAoKQogICAgICAgIGlmIG5vdCBsaW5lIG9y
+IGxpbmUuc3RhcnRzd2l0aCgiIyIpIG9yICI9IiBub3QgaW4gbGluZToKICAgICAgICAgICAgY29u
+dGludWUKICAgICAgICBrZXksIF8sIHZhbCA9IGxpbmUucGFydGl0aW9uKCI9IikKICAgICAgICBr
+ZXkgPSBrZXkuc3RyaXAoKQogICAgICAgIHZhbCA9IHZhbC5zdHJpcCgpLnN0cmlwKCInIikuc3Ry
+aXAoJyInKQogICAgICAgIGlmIGtleSA9PSAiQUNDRVNTX1RPS0VOIjoKICAgICAgICAgICAgdG9r
+ZW4gPSB2YWwKICAgIHJldHVybiB0b2tlbgoKZGVmIHNlZW5fbm9uY2Uobjogc3RyKSAtPiBib29s
+OgogICAgTk9OQ0VfRElSLm1rZGlyKHBhcmVudHM9VHJ1ZSwgZXhpc3Rfb2s9VHJ1ZSkKICAgIG5v
+dyA9IHRpbWUudGltZSgpCiAgICBmb3IgZiBpbiBsaXN0KE5PTkNFX0RJUi5pdGVyZGlyKCkpOgog
+ICAgICAgIHRyeToKICAgICAgICAgICAgaWYgbm93IC0gZi5zdGF0KCkuc3RfbXRpbWUgPiAzMDA6
+CiAgICAgICAgICAgICAgICBmLnVubGluayhtaXNzaW5nX29rPVRydWUpCiAgICAgICAgZXhjZXB0
+IEV4Y2VwdGlvbjoKICAgICAgICAgICAgcGFzcwogICAgcCA9IE5PTkNFX0RJUiAvIG4KICAgIGlm
+IHAuZXhpc3RzKCk6CiAgICAgICAgcmV0dXJuIFRydWUKICAgIHAud3JpdGVfdGV4dCgiMSIpCiAg
+ICByZXR1cm4gRmFsc2UKCmRlZiBzZW5kX3Jlc3AoY29ubiwgY29kZTogc3RyLCBtc2c6IHN0cikg
+LT4gTm9uZToKICAgIGIgPSBtc2cuZW5jb2RlKCkKICAgIHRyeToKICAgICAgICBjb25uLnNlbmRh
+bGwoCiAgICAgICAgICAgICgKICAgICAgICAgICAgICAgIGYiSFRUUC8xLjEge2NvZGV9XHJcbiIK
+ICAgICAgICAgICAgICAgIGYiQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uXHJcbiIKICAg
+ICAgICAgICAgICAgIGYiQ29ubmVjdGlvbjogY2xvc2VcclxuIgogICAgICAgICAgICAgICAgZiJD
+b250ZW50LUxlbmd0aDoge2xlbihiKX1cclxuIgogICAgICAgICAgICAgICAgZiJcclxuIgogICAg
+ICAgICAgICApLmVuY29kZSgpCiAgICAgICAgICAgICsgYgogICAgICAgICkKICAgIGV4Y2VwdCBF
+eGNlcHRpb24gYXMgZToKICAgICAgICBsb2coInNlbmRfcmVzcCBmYWlsZWQ6ICIgKyBzdHIoZSkp
+CgpkZWYgcmVjdl9hbGxfaGVhZGVycyhjb25uLCBsaW1pdD0xNjM4NCk6CiAgICBkYXRhID0gYiIi
+CiAgICB3aGlsZSBiIlxyXG5cclxuIiBub3QgaW4gZGF0YSBhbmQgbGVuKGRhdGEpIDwgbGltaXQ6
+CiAgICAgICAgdHJ5OgogICAgICAgICAgICBjaHVuayA9IGNvbm4ucmVjdig0MDk2KQogICAgICAg
+IGV4Y2VwdCBzb2NrZXQudGltZW91dDoKICAgICAgICAgICAgYnJlYWsKICAgICAgICBpZiBub3Qg
+Y2h1bms6CiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgZGF0YSArPSBjaHVuawogICAgcmV0dXJu
+IGRhdGEKCmRlZiBoYW5kbGUoY29ubikgLT4gTm9uZToKICAgIGNvbm4uc2V0dGltZW91dCgxNSkK
+ICAgIGRhdGEgPSByZWN2X2FsbF9oZWFkZXJzKGNvbm4pCiAgICBpZiBiIlxyXG5cclxuIiBub3Qg
+aW4gZGF0YToKICAgICAgICBzZW5kX3Jlc3AoY29ubiwgIjQwMCBCYWQgUmVxdWVzdCIsICd7Im9r
+IjpmYWxzZSwiZXJyb3IiOiJpbmNvbXBsZXRlIHJlcXVlc3QifScpCiAgICAgICAgbG9nKCJpbmNv
+bXBsZXRlIHJlcXVlc3QgbGVuPSIgKyBzdHIobGVuKGRhdGEpKSkKICAgICAgICByZXR1cm4KICAg
+IGhlYWQsIF8sIHJlc3QgPSBkYXRhLnBhcnRpdGlvbihiIlxyXG5cclxuIikKICAgIGxpbmVzID0g
+aGVhZC5kZWNvZGUoImxhdGluMSIsICJyZXBsYWNlIikuc3BsaXQoIlxyXG4iKQogICAgcmVxID0g
+bGluZXNbMF0uc3BsaXQoKQogICAgaWYgbGVuKHJlcSkgPCAyOgogICAgICAgIHNlbmRfcmVzcChj
+b25uLCAiNDAwIEJhZCBSZXF1ZXN0IiwgJ3sib2siOmZhbHNlLCJlcnJvciI6ImJhZCByZXF1ZXN0
+IGxpbmUifScpCiAgICAgICAgcmV0dXJuCiAgICBtZXRob2QsIHBhdGggPSByZXFbMF0sIHJlcVsx
+XQogICAgaGVhZGVycyA9IHt9CiAgICBmb3IgbGluZSBpbiBsaW5lc1sxOl06CiAgICAgICAgaWYg
+IjoiIGluIGxpbmU6CiAgICAgICAgICAgIGssIHYgPSBsaW5lLnNwbGl0KCI6IiwgMSkKICAgICAg
+ICAgICAgaGVhZGVyc1trLnN0cmlwKCkubG93ZXIoKV0gPSB2LnN0cmlwKCkKICAgIHRyeToKICAg
+ICAgICBjbGVuID0gaW50KGhlYWRlcnMuZ2V0KCJjb250ZW50LWxlbmd0aCIpIG9yIDApCiAgICBl
+eGNlcHQgVmFsdWVFcnJvcjoKICAgICAgICBjbGVuID0gMAogICAgaWYgY2xlbiA8IDAgb3IgY2xl
+biA+IDQwOTY6CiAgICAgICAgc2VuZF9yZXNwKGNvbm4sICI0MDAgQmFkIFJlcXVlc3QiLCAneyJv
+ayI6ZmFsc2UsImVycm9yIjoiYmFkIGNvbnRlbnQtbGVuZ3RoIn0nKQogICAgICAgIHJldHVybgog
+ICAgYm9keSA9IHJlc3QKICAgIHdoaWxlIGxlbihib2R5KSA8IGNsZW46CiAgICAgICAgdHJ5Ogog
+ICAgICAgICAgICBjaHVuayA9IGNvbm4ucmVjdihjbGVuIC0gbGVuKGJvZHkpKQogICAgICAgIGV4
+Y2VwdCBzb2NrZXQudGltZW91dDoKICAgICAgICAgICAgYnJlYWsKICAgICAgICBpZiBub3QgY2h1
+bms6CiAgICAgICAgICAgIGJyZWFrCiAgICAgICAgYm9keSArPSBjaHVuawogICAgYm9keSA9IGJv
+ZHlbOmNsZW5dCgogICAgaWYgbWV0aG9kICE9ICJQT1NUIiBvciBwYXRoLnNwbGl0KCI/IilbMF0g
+IT0gIi9mb3JjZS1yZXBvcnQiOgogICAgICAgIHNlbmRfcmVzcChjb25uLCAiNDA0IE5vdCBGb3Vu
+ZCIsICd7Im9rIjpmYWxzZSwiZXJyb3IiOiJub3QgZm91bmQifScpCiAgICAgICAgcmV0dXJuCgog
+ICAgdG9rZW4gPSBsb2FkX2FjY2Vzc190b2tlbigpCiAgICBpZiBub3QgdG9rZW46CiAgICAgICAg
+c2VuZF9yZXNwKGNvbm4sICI1MDAgSW50ZXJuYWwgU2VydmVyIEVycm9yIiwgJ3sib2siOmZhbHNl
+LCJlcnJvciI6Im5vIEFDQ0VTU19UT0tFTiBpbiBjb25mIn0nKQogICAgICAgIGxvZygibm8gQUND
+RVNTX1RPS0VOIGluIGNvbmYiKQogICAgICAgIHJldHVybgoKICAgIGF1dGggPSBoZWFkZXJzLmdl
+dCgiYXV0aG9yaXphdGlvbiIsICIiKQogICAgaWYgYXV0aC5sb3dlcigpLnN0YXJ0c3dpdGgoImJl
+YXJlciAiKToKICAgICAgICBhdXRoID0gYXV0aFs3Ol0uc3RyaXAoKQogICAgYXV0aCA9IGF1dGgu
+cmVwbGFjZSgiXHIiLCAiIikucmVwbGFjZSgiXG4iLCAiIikuc3RyaXAoKS5zdHJpcCgiJyIpLnN0
+cmlwKCciJykKCiAgICBpZiBub3QgYXV0aDoKICAgICAgICBzZW5kX3Jlc3AoY29ubiwgIjQwMSBV
+bmF1dGhvcml6ZWQiLCAneyJvayI6ZmFsc2UsImVycm9yIjoibWlzc2luZyBiZWFyZXIifScpCiAg
+ICAgICAgbG9nKCJtaXNzaW5nIGJlYXJlciIpCiAgICAgICAgcmV0dXJuCiAgICBpZiBsZW4oYXV0
+aCkgIT0gbGVuKHRva2VuKToKICAgICAgICBzZW5kX3Jlc3AoCiAgICAgICAgICAgIGNvbm4sCiAg
+ICAgICAgICAgICI0MDEgVW5hdXRob3JpemVkIiwKICAgICAgICAgICAgJ3sib2siOmZhbHNlLCJl
+cnJvciI6InRva2VuIGxlbmd0aCBtaXNtYXRjaCIsImdvdCI6JWQsImV4cGVjdCI6JWR9JwogICAg
+ICAgICAgICAlIChsZW4oYXV0aCksIGxlbih0b2tlbikpLAogICAgICAgICkKICAgICAgICBsb2co
+InRva2VuIGxlbmd0aCBtaXNtYXRjaCBnb3Q9JWQgZXhwZWN0PSVkIiAlIChsZW4oYXV0aCksIGxl
+bih0b2tlbikpKQogICAgICAgIHJldHVybgogICAgaWYgbm90IGhtYWMuY29tcGFyZV9kaWdlc3Qo
+YXV0aCwgdG9rZW4pOgogICAgICAgIHNlbmRfcmVzcCgKICAgICAgICAgICAgY29ubiwKICAgICAg
+ICAgICAgIjQwMSBVbmF1dGhvcml6ZWQiLAogICAgICAgICAgICAneyJvayI6ZmFsc2UsImVycm9y
+IjoidG9rZW4gbWlzbWF0Y2giLCJnb3RfcHJlZml4IjoiJXMiLCJleHBlY3RfcHJlZml4IjoiJXMi
+fScKICAgICAgICAgICAgJSAoYXV0aFs6Nl0sIHRva2VuWzo2XSksCiAgICAgICAgKQogICAgICAg
+IGxvZygidG9rZW4gbWlzbWF0Y2ggZ290X3ByZWZpeD0lcyBleHBlY3RfcHJlZml4PSVzIiAlIChh
+dXRoWzo2XSwgdG9rZW5bOjZdKSkKICAgICAgICByZXR1cm4KCiAgICAjIEhNQUMg5Y+v6YCJ77ya
+5pyJ562+5ZCN5YiZ5qCh6aqM77yb5peg562+5ZCN5oiW5qCh6aqM5aSx6LSl5pe277yMQmVhcmVy
+IOW3sumAmui/h+S7jeaOpeWPl++8iOmBv+WFjeaXpyBXb3JrZXIv5pe26ZKf6Zeu6aKY5Y2h5q27
+77yJCiAgICB0cyA9IGhlYWRlcnMuZ2V0KCJ4LXRpbWVzdGFtcCIsICIiKQogICAgbm9uY2UgPSBo
+ZWFkZXJzLmdldCgieC1ub25jZSIsICIiKQogICAgc2lnID0gaGVhZGVycy5nZXQoIngtc2lnbmF0
+dXJlIiwgIiIpLmxvd2VyKCkuc3RyaXAoKQogICAgaWYgdHMgYW5kIG5vbmNlIGFuZCBzaWc6CiAg
+ICAgICAgaWYgcmUuZnVsbG1hdGNoKHIiWzAtOV0rIiwgdHMpIGFuZCBhYnMoaW50KHRpbWUudGlt
+ZSgpKSAtIGludCh0cykpIDw9IDMwMDoKICAgICAgICAgICAgaWYgcmUuZnVsbG1hdGNoKHIiW0Et
+WmEtejAtOS5fLV17OCw2NH0iLCBub25jZSkgYW5kIG5vdCBzZWVuX25vbmNlKG5vbmNlKToKICAg
+ICAgICAgICAgICAgIG1zZyA9IGYie3RzfVxue25vbmNlfVxuIi5lbmNvZGUoKSArIGJvZHkKICAg
+ICAgICAgICAgICAgIGV4cGVjdCA9IGhtYWMubmV3KHRva2VuLmVuY29kZSgidXRmLTgiKSwgbXNn
+LCBoYXNobGliLnNoYTI1NikuaGV4ZGlnZXN0KCkKICAgICAgICAgICAgICAgIGlmIG5vdCBobWFj
+LmNvbXBhcmVfZGlnZXN0KGV4cGVjdCwgc2lnKToKICAgICAgICAgICAgICAgICAgICBsb2coImht
+YWMgbWlzbWF0Y2ggKGJlYXJlciBvaywgc3RpbGwgYWNjZXB0KSIpCiAgICAgICAgICAgIGVsc2U6
+CiAgICAgICAgICAgICAgICBsb2coIm5vbmNlL3RzIHNraXAgaG1hYyIpCiAgICAgICAgZWxzZToK
+ICAgICAgICAgICAgbG9nKCJ0aW1lc3RhbXAgc2tldyBza2lwIGhtYWMgc3RyaWN0IikKCiAgICBz
+ZW5kX3Jlc3AoY29ubiwgIjIwMCBPSyIsICd7Im9rIjp0cnVlLCJhY2NlcHRlZCI6dHJ1ZX0nKQog
+ICAgdHJ5OgogICAgICAgIHN1YnByb2Nlc3MuUG9wZW4oCiAgICAgICAgICAgIFtSRVBPUlQsICIt
+LWNmIl0sCiAgICAgICAgICAgIHN0ZG91dD1zdWJwcm9jZXNzLkRFVk5VTEwsCiAgICAgICAgICAg
+IHN0ZGVycj1zdWJwcm9jZXNzLkRFVk5VTEwsCiAgICAgICAgICAgIHN0YXJ0X25ld19zZXNzaW9u
+PVRydWUsCiAgICAgICAgKQogICAgICAgIGxvZygiYWNjZXB0ZWQgZm9yY2UtcmVwb3J0LCBzcGF3
+bmVkIC0tY2YiKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIGxvZygic3Bhd24g
+cmVwb3J0IGZhaWxlZDogIiArIHN0cihlKSkKCnNydiA9IHNvY2tldC5zb2NrZXQoc29ja2V0LkFG
+X0lORVQsIHNvY2tldC5TT0NLX1NUUkVBTSkKc3J2LnNldHNvY2tvcHQoc29ja2V0LlNPTF9TT0NL
+RVQsIHNvY2tldC5TT19SRVVTRUFERFIsIDEpCnNydi5iaW5kKCgiMC4wLjAuMCIsIHBvcnQpKQpz
+cnYubGlzdGVuKDMyKQpsb2coImNhbGxiYWNrIGxpc3RlbmluZyBwb3J0PSVkIGNvbmY9JXMiICUg
+KHBvcnQsIENPTkZJRykpCndoaWxlIFRydWU6CiAgICBjb25uLCBhZGRyID0gc3J2LmFjY2VwdCgp
+CiAgICB0cnk6CiAgICAgICAgaGFuZGxlKGNvbm4pCiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGU6
+CiAgICAgICAgbG9nKCJoYW5kbGUgZXJyb3IgZnJvbSAlczogJXMiICUgKGFkZHIsIGUpKQogICAg
+ICAgIHRyeToKICAgICAgICAgICAgc2VuZF9yZXNwKGNvbm4sICI1MDAgSW50ZXJuYWwgU2VydmVy
+IEVycm9yIiwgJ3sib2siOmZhbHNlLCJlcnJvciI6ImludGVybmFsIn0nKQogICAgICAgIGV4Y2Vw
+dCBFeGNlcHRpb246CiAgICAgICAgICAgIHBhc3MKICAgIGZpbmFsbHk6CiAgICAgICAgdHJ5Ogog
+ICAgICAgICAgICBjb25uLnNodXRkb3duKHNvY2tldC5TSFVUX1JEV1IpCiAgICAgICAgZXhjZXB0
+IEV4Y2VwdGlvbjoKICAgICAgICAgICAgcGFzcwogICAgICAgIHRyeToKICAgICAgICAgICAgY29u
+bi5jbG9zZSgpCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgcGFzcwpQWUlO
+TkVSCn0KCm1haW4gIiRAIgo=
 B64
   install -o root -g root -m 750 "${tmp}" "${CB_LISTEN_SCRIPT}"
   rm -f "${tmp}"
@@ -722,7 +723,7 @@ enable_timers() {
   if [[ "${cf_enabled}" == "1" ]]; then
     systemctl enable --now "${APP_NAME}-cf.timer"
     systemctl enable "${APP_NAME}-cb.service"
-    # 必须 restart：enable --now 对已在跑的服务不会重载 conf 里的 CF_TOKEN
+    # 必须 restart：enable --now 对已在跑的服务不会重载 conf 里的 ACCESS_TOKEN
     systemctl restart "${APP_NAME}-cb.service"
     # 不再安装 poll；清理旧版 poll timer（若曾装过）
     systemctl disable --now "${APP_NAME}-poll.timer" >/dev/null 2>&1 || true
@@ -745,7 +746,7 @@ enable_timers() {
 send_test() {
   if [[ "${CF_ENABLED}" == "true" ]]; then
     log '安装完成，立即上报一次 CF 流量...'
-    "${REPORT_SCRIPT}" --cf || die 'CF 立即上报失败。请检查 cf_url / cf_token / m_id。'
+    "${REPORT_SCRIPT}" --cf || die 'CF 立即上报失败。请检查 cf_url / access_token / m_id。'
   fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
     log '发送 Telegram 测试消息...'
@@ -761,7 +762,7 @@ print_summary() {
     printf '  机器 ID：    %s\n'   "${m_id}"
     printf '  CF 上报：    cron %s\n' "${cf_cron}"
   else
-    printf '  CF 上报：    未启用（设置 cf_url+cf_token+m_id 可开启）\n'
+    printf '  CF 上报：    未启用（设置 cf_url+access_token+m_id 可开启）\n'
   fi
   if [[ "${TG_ENABLED}" == "true" ]]; then
     printf '  TG 汇报：    每天 %s\n' "${tg_time}"
@@ -802,8 +803,8 @@ uninstall_app() {
 }
 
 main() {
-  # 注意：不可 local m_id/cf_token/cf_url，会遮蔽命令行传入的环境变量
-  local ifname mid_val cf_token_val cf_url_val tg_token tg_cid tg_time cf_cron
+  # 注意：不可 local m_id/access_token/cf_url，会遮蔽命令行传入的环境变量
+  local ifname mid_val access_token_val cf_url_val tg_token tg_cid tg_time cf_cron
   require_root
   if [[ "${1:-}" == '--uninstall' ]]; then uninstall_app; return; fi
   check_debian13
@@ -816,11 +817,11 @@ main() {
     TG_ENABLED=true
   fi
   mid_val="$(resolve_m_id)"
-  cf_token_val="$(resolve_cf_token)"
+  access_token_val="$(resolve_access_token)"
   cf_url_val="$(resolve_cf_url)"
   cf_cron="$(resolve_cf_time)"
   local cb_port_val="" cb_url_val=""
-  if [[ -n "${cf_url_val}" && -n "${cf_token_val}" && -n "${mid_val}" ]]; then
+  if [[ -n "${cf_url_val}" && -n "${access_token_val}" && -n "${mid_val}" ]]; then
     CF_ENABLED=true
     cb_port_val="$(resolve_cb_port)"
     cb_url_val="$(detect_callback_url "${cb_port_val}")"
@@ -833,7 +834,7 @@ main() {
 
   # 至少启用一条通道
   if [[ "${TG_ENABLED}" != "true" && "${CF_ENABLED}" != "true" ]]; then
-    die '请至少配置 TG（t_token+t_id）或 CF（cf_url+cf_token+m_id）其中一组。'
+    die '请至少配置 TG（t_token+t_id）或 CF（cf_url+access_token+m_id）其中一组。'
   fi
 
   install_deps
@@ -844,7 +845,7 @@ main() {
   fi
   ifname="$(detect_interface)"
   configure_vnstat "${ifname}"
-  write_config "${ifname}" "${mid_val}" "${cf_token_val}" "${cf_url_val}" "${tg_token}" "${tg_cid}" "${cb_url_val}" "${cb_port_val}"
+  write_config "${ifname}" "${mid_val}" "${access_token_val}" "${cf_url_val}" "${tg_token}" "${tg_cid}" "${cb_url_val}" "${cb_port_val}"
   write_reporter
 
   # CF 服务/定时（可选）

@@ -751,14 +751,18 @@ async function httpPostViaTcpSocket(urlStr, headerMap, bodyStr, timeoutMs = 1000
       }
     }
 
+    // 一次写完请求体；读响应前不要 close writable（整连接关闭会导致服务端回包失败、客户端读到空）
+    const reqBytes = new Uint8Array(headBytes.byteLength + bodyBytes.byteLength);
+    reqBytes.set(headBytes, 0);
+    reqBytes.set(bodyBytes, headBytes.byteLength);
+
     const writer = socket.writable.getWriter();
     try {
-      await writer.write(headBytes);
-      if (bodyBytes.byteLength) await writer.write(bodyBytes);
+      await writer.write(reqBytes);
     } catch (e) {
       throw new Error("TCP 写入失败 → " + target + " · " + errText(e));
     } finally {
-      try { await writer.close(); } catch { /* half-close OK */ }
+      try { writer.releaseLock(); } catch { /* ignore */ }
     }
 
     const reader = socket.readable.getReader();
@@ -771,6 +775,13 @@ async function httpPostViaTcpSocket(urlStr, headerMap, bodyStr, timeoutMs = 1000
         if (value && value.byteLength) {
           chunks.push(value);
           total += value.byteLength;
+          // 已拿到完整 HTTP 头+一点 body 即可停（短 JSON 响应）
+          if (total > 256) {
+            let peek = "";
+            const dec = new TextDecoder();
+            for (const c of chunks) peek += dec.decode(c, { stream: true });
+            if (peek.includes("\r\n\r\n")) break;
+          }
           if (total > 65536) break;
         }
       }
@@ -785,7 +796,7 @@ async function httpPostViaTcpSocket(urlStr, headerMap, bodyStr, timeoutMs = 1000
       return {
         ok: false,
         status: 0,
-        body: "TCP 已连接但无 HTTP 响应 → " + target + "（端口通但非回调服务，或服务未处理 POST）",
+        body: "TCP 已连接但无 HTTP 响应 → " + target + "（读前勿关连接；或 VPS 回调未回包，请更新 sum.sh 回调服务）",
       };
     }
 

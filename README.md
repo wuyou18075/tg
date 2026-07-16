@@ -211,6 +211,24 @@ ss -lntp | grep 19840
 journalctl -u traffic-telegram-report-cb.service -n 50 --no-pager
 ```
 
+若弹窗报「TCP 已连接但无 HTTP 响应」：多半是旧版回调脚本在异常时不回包，或 Worker 过早关连接。请：
+
+1. 部署最新 Worker（含 TCP 读写修复）
+2. 在 VPS 上更新回调脚本（任选）
+
+```bash
+# 方式 A：用看板「更新注册」生成的命令重装（推荐）
+# 方式 B：拉取仓库最新 sum.sh 后重装
+bash <(curl -fsSL 'https://raw.githubusercontent.com/wuyou18075/tg/refs/heads/main/sum.sh') --  # 需带原有 m_id/cf_* 环境变量
+```
+
+本机快速验证（应返回 JSON）：
+
+```bash
+# 用错误 token 应返回 401 JSON，而不是空连接
+curl -sv -X POST http://127.0.0.1:19840/force-report -d '{}' -H 'Content-Type: application/json' | head
+```
+
 ## Agent 运维
 
 ```bash

@@ -1604,9 +1604,9 @@ textarea:focus{border-color:#3b82f6}
       <input id="s_t_id" type="text" placeholder="留空则用环境变量 TG_ID">
       <div class="hint" id="hint_t_id">页面未填时使用环境变量 TG_ID</div>
 
-      <label for="s_t_time">TG 汇报时间</label>
+      <label for="s_t_time">TG 汇报时间（HH:MM:SS，定时自动发送）</label>
       <input id="s_t_time" type="text" placeholder="20:00:00">
-      <div class="hint">留空默认 20:00:00</div>
+      <div class="hint">Worker 每 15 分钟检查，到点（精确到分钟，如 20:00）自动发 TG 汇总；留空默认 20:00:00</div>
 
       <label for="s_cf_time">CF 上报 cron（VPS 端默认）</label>
       <input id="s_cf_time" type="text" placeholder="0 * * * *">
@@ -3086,5 +3086,25 @@ export default {
     }
 
     return json({ ok: false, error: "not found" }, 404);
+  },
+
+  /** 定时触发：每 15 分钟检查一次，到设置的 TG 汇报时间则发送 */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        if (!env.DB) return;
+        const t_time = (await getConfigValue(env, "t_time")) || "20:00:00";
+        const m = /^(\d{2}):(\d{2})/.exec(t_time);
+        if (!m) return;
+        const th = m[1], tm = m[2];
+        const sh = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
+        const hh = String(sh.getHours()).padStart(2, "0");
+        const mm = String(sh.getMinutes()).padStart(2, "0");
+        if (hh === th && mm === tm) {
+          const r = await tgSummary(env);
+          if (!r || !r.ok) console.log("[scheduled] TG summary skip:", r && r.error);
+        }
+      } catch (e) { console.log("[scheduled] error", e && e.message); }
+    })());
   },
 };

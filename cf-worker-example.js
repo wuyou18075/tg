@@ -1933,7 +1933,7 @@ html[data-theme="paper"]{
   --grid:#d3e0ef; --glow:rgba(59,111,212,.08); --header-glow:linear-gradient(90deg,rgba(59,111,212,.06),transparent);
   --body-bg:linear-gradient(180deg,#e3ecf7 0%,#eaf1f9 50%,#e6eef8 100%);
 }
-/* 草原绿：柔雾浅绿底 + 森林强调（恢复上一版） */
+/* 草原绿：首版柔雾浅绿 + 森林强调 */
 html[data-theme="prairie"]{
   color-scheme:light;
   --bg:#f3f7f1; --bg2:#f8fbf6; --panel:#ffffff; --panel2:#eef5ea;
@@ -1945,6 +1945,20 @@ html[data-theme="prairie"]{
   --rx:#4f8f5c; --tx:#6b9e6f; --rx-soft:rgba(79,143,92,.9); --tx-soft:rgba(107,158,111,.88);
   --rx-fill:rgba(79,143,92,.14); --tx-fill:rgba(107,158,111,.12);
   --grid:#dfead9; --glow:rgba(63,125,78,.10); --header-glow:linear-gradient(90deg,rgba(63,125,78,.08),rgba(180,200,150,.05));
+}
+/* 暗夜红：深酒红底 + 暗珊瑚强调，沉稳不刺眼 */
+html[data-theme="crimson"]{
+  color-scheme:dark;
+  --bg:#12090b; --bg2:#1a0e11; --panel:#221316; --panel2:#180d10;
+  --line:#3a2228; --line2:#2c1a1f; --border:#4a2c34;
+  --text:#f3e8ea; --muted:#b79aa0; --label:#d8b8be;
+  --hover:#2b171c; --accent:#c45c6a; --accent2:#a84856;
+  --ok:#3fae7a; --ok2:#329265; --warn:#d4a017; --danger:#e06b6b; --danger2:#c95555;
+  --badge-bg:#3a1c24; --badge-fg:#f0c4cb; --badge-off-bg:#3a1518; --badge-off-fg:#f0a8a8;
+  --rx:#d47884; --tx:#c4a88c; --rx-soft:rgba(212,120,132,.9); --tx-soft:rgba(196,168,140,.88);
+  --rx-fill:rgba(212,120,132,.14); --tx-fill:rgba(196,168,140,.12);
+  --grid:#2c1a1f; --glow:rgba(196,92,106,.12); --header-glow:linear-gradient(90deg,rgba(196,92,106,.12),transparent 70%);
+  --body-bg:radial-gradient(800px 420px at 0% 0%, rgba(196,92,106,.10), transparent 55%), #12090b;
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;background:var(--body-bg,var(--bg));color:var(--text);min-height:100vh}
@@ -2101,6 +2115,30 @@ html[data-theme="noir"] .settings-card{
   background:#0f1218;
 }
 html[data-theme="prairie"] button.primary{color:#fff}
+html[data-theme="crimson"] button.primary,
+html[data-theme="crimson"] .seg button.active{
+  background:#c45c6a; border:1px solid #d47884; color:#1a080c; font-weight:700; box-shadow:none;
+}
+html[data-theme="crimson"] button.primary:hover{background:#d47884;border-color:#e8a0aa;color:#1a080c}
+html[data-theme="crimson"] button.green{background:#3fae7a;border-color:#5fc993;color:#041810;font-weight:700;box-shadow:none}
+html[data-theme="crimson"] button.warn{background:#d4a017;border-color:#e0b84a;color:#1a1203;font-weight:700;box-shadow:none}
+html[data-theme="crimson"] button.danger{background:#e06b6b;border-color:#f0a0a0;color:#1a0808;font-weight:700;box-shadow:none}
+html[data-theme="crimson"] button:not(.primary):not(.green):not(.warn):not(.danger),
+html[data-theme="crimson"] select,
+html[data-theme="crimson"] .settings-form input,
+html[data-theme="crimson"] .settings-form select,
+html[data-theme="crimson"] .settings-form textarea,
+html[data-theme="crimson"] textarea,
+html[data-theme="crimson"] .seg button{
+  background:#1c1014; border-color:#4a2c34; color:var(--text); box-shadow:none;
+}
+html[data-theme="crimson"] .seg button.active{background:#c45c6a;border-color:#d47884;color:#1a080c}
+html[data-theme="crimson"] header{background:#1a0e11;border-bottom-color:#3a2228;box-shadow:none}
+html[data-theme="crimson"] .card,
+html[data-theme="crimson"] .panel,
+html[data-theme="crimson"] .settings-card{
+  background:#221316; box-shadow:0 1px 0 rgba(255,255,255,.03),0 8px 22px rgba(0,0,0,.35);
+}
 
 html[data-theme="paper"] button.primary{color:#fff}
 
@@ -2152,6 +2190,8 @@ html[data-theme="paper"] .status-pill.on{color:#166534;background:#dcfce7;border
 html[data-theme="paper"] .status-pill.off{color:#991b1b;background:#fee2e2;border-color:#fca5a5}
 html[data-theme="prairie"] .status-pill.on{color:#2f5a3a;background:#dff0db;border-color:#a8cba1}
 html[data-theme="prairie"] .status-pill.off{color:#8a3a3a;background:#f0d4d4;border-color:#d9a0a0}
+html[data-theme="crimson"] .status-pill.on{color:#86efac;background:rgba(63,174,122,.14);border-color:rgba(63,174,122,.3)}
+html[data-theme="crimson"] .status-pill.off{color:#f0a8a8;background:rgba(224,107,107,.14);border-color:rgba(224,107,107,.3)}
 td.status-cell{white-space:nowrap;min-width:88px}
 button.sm{padding:4px 8px;font-size:12px;border-radius:6px}
 button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
@@ -2267,6 +2307,7 @@ textarea:focus{border-color:var(--accent)}
 .theme-opt[data-id="glass"]{--sw1:#0a1024;--sw2:#7dd3fc;--sw3:#a5b4fc}
 .theme-opt[data-id="paper"]{--sw1:#e6eef8;--sw2:#3b6fd4;--sw3:#2a8f9a}
 .theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#3f7d4e;--sw3:#6b9e6f}
+.theme-opt[data-id="crimson"]{--sw1:#12090b;--sw2:#c45c6a;--sw3:#4a2c34}
 </style>
 
 <header>
@@ -3516,7 +3557,8 @@ const THEMES = [
   { id:"noir", name:"炫酷黑", desc:"更深哑光灰黑" },
   { id:"glass", name:"透明玻璃", desc:"深空底 + 毛玻璃" },
   { id:"paper", name:"优雅白", desc:"淡蓝雾感，柔和不刺眼" },
-  { id:"prairie", name:"草原绿", desc:"柔雾浅绿森林强调" },
+  { id:"prairie", name:"草原绿", desc:"首版柔雾浅绿" },
+  { id:"crimson", name:"暗夜红", desc:"深酒红 + 暗珊瑚" },
 ];
 const THEME_ALIAS = { matrix:"prairie", aurora:"glass", ice:"paper", ember:"noir" };
 function cssVar(name, fallback) {

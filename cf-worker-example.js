@@ -348,15 +348,37 @@ async function upsertReport(env, rec) {
   const cbRaw = rec.callback_url != null ? String(rec.callback_url).trim() : "";
   const callback_url = isValidCallbackUrl(cbRaw) ? cbRaw : null;
 
-  // 累积在线：若与上次上报间隔 ≤ ONLINE_GAP_SEC，则把间隔计入 online_sec
+  // 累积在线 + 跨日封存：先读旧行（含 today_*），日切时把「昨天最终累计」写入 snapshot，避免被新一天覆盖后图上只剩今天
   const prev = await env.DB.prepare(
-    `SELECT last_ts, online_sec FROM machines WHERE machine_id = ?`
+    `SELECT last_ts, online_sec, today_rx, today_tx, month_rx, month_tx FROM machines WHERE machine_id = ?`
   ).bind(mid).first();
   let online_sec = prev ? (Number(prev.online_sec) || 0) : 0;
   if (prev && prev.last_ts != null) {
     const gap = ts - Number(prev.last_ts);
     if (gap > 0 && gap <= ONLINE_GAP_SEC) {
       online_sec += gap;
+    }
+  }
+
+  // 上海自然日切换：用旧行 today_* 补一条「昨日封存」snapshot（节流也不会丢整天）
+  if (prev && prev.last_ts != null) {
+    const prevTs = Number(prev.last_ts) || 0;
+    const prevDay = shanghaiBucket(prevTs, false);
+    const curDay = shanghaiBucket(ts, false);
+    if (prevDay && curDay && prevDay !== curDay) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO snapshots (machine_id, ts, today_rx, today_tx, month_rx, month_tx)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(
+          mid,
+          prevTs,
+          Number(prev.today_rx) || 0,
+          Number(prev.today_tx) || 0,
+          Number(prev.month_rx) || 0,
+          Number(prev.month_tx) || 0,
+        ).run();
+      } catch { /* ignore seal errors */ }
     }
   }
 
@@ -374,7 +396,7 @@ async function upsertReport(env, rec) {
     Number(month.rx) || 0, Number(month.tx) || 0, now, callback_url, online_sec
   ).run();
 
-  // 写历史：5 分钟节流；跨上海自然日必须立刻落一条，避免「已是 17 号但图仍停在 16 号」
+  // 写历史：5 分钟节流；跨上海自然日必须立刻落一条（当天第一笔）
   const last = await env.DB.prepare(
     `SELECT ts FROM snapshots WHERE machine_id = ? ORDER BY ts DESC LIMIT 1`
   ).bind(mid).first();
@@ -591,7 +613,8 @@ async function getHistoryHourly(env, { mid, span }) {
  */
 async function getHistoryAgg(env, { mid, mode, span }) {
   const isMonth = mode === "month";
-  const n = Math.min(isMonth ? 24 : 90, Math.max(1, Number(span) || (isMonth ? 6 : 14)));
+  // 日聚合最长 31 天（一个月）；月聚合最长 24 个月
+  const n = Math.min(isMonth ? 24 : 31, Math.max(1, Number(span) || (isMonth ? 12 : 31)));
   const now = Math.floor(Date.now() / 1000);
   const since = isMonth ? now - n * 31 * 86400 : now - n * 86400;
 
@@ -1505,16 +1528,16 @@ async function forceReportPushAll(env) {
 
 const BUILTIN_TEMPLATES = [
   { id:"card", name:"📊 卡片日报", builtin:true,
-    body: "📊 流量日报\n━━━━━━━━━━━━━\n🕐 {time}\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\n\n📥 今日  入 {today_rx} ｜ 出 {today_tx}\n🟰 合计 {today_total}\n📅 本月  入 {month_rx} ｜ 出 {month_tx}\n🟰 合计 {month_total}\n━━━━━━━━━━━━━\n{machine_lines}",
-    machine_line: "{status} {m_id}  📥{today_rx} 📤{today_tx}",
+    body: "📊 流量日报\n━━━━━━━━━━━━\n🕐 时间：{time}\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\n\n📥 今日入站  {today_rx}\n📤 今日出站  {today_tx}\n📦 今日合计  {today_total}\n\n📥 本月入站  {month_rx}\n📤 本月出站  {month_tx}\n📦 本月合计  {month_total}\n━━━━━━━━━━━━\n{machine_lines}",
+    machine_line: "{status} {m_id}\n    📥 {today_rx}  ·  📤 {today_tx}",
   },
-  { id:"detail", name:"⚡ 今日排行", builtin:true,
-    body: "⚡ 今日排行 · {time}\n在线 {online_count}/{host_count} · 合计 {today_total}\n────────────────\n{machine_lines}\n本月累计 {month_total}",
-    machine_line: "{status} {m_id}  ↑{today_rx} ↓{today_tx}",
+  { id:"detail", name:"🏆 今日排行", builtin:true,
+    body: "🏆 今日排行\n🕐 时间：{time}\n🟢 在线：{online_count}/{host_count} 台\n📦 今日合计：{today_total}\n━━━━━━━━━━━━\n{machine_lines}\n━━━━━━━━━━━━\n📅 本月累计：{month_total}",
+    machine_line: "{status} {m_id}\n    📥 {today_rx}  ·  📤 {today_tx}",
   },
-  { id:"brief", name:"📈 详细日报", builtin:true,
-    body: "📈 详细日报 · {time}\n主机 {host_count} 台（在线 {online_count}）\n\n今日  入 {today_rx}  出 {today_tx}  共 {today_total}\n本月  入 {month_rx}  出 {month_tx}  共 {month_total}\n┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n{machine_lines}",
-    machine_line: "{status} {m_id} · {hostname}\n    日 {today_rx}/{today_tx} · 月 {month_rx}/{month_tx}",
+  { id:"brief", name:"📋 详细日报", builtin:true,
+    body: "📋 详细日报\n🕐 时间：{time}\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\n\n📦 今日  📥 {today_rx}  ·  📤 {today_tx}  ·  共 {today_total}\n📦 本月  📥 {month_rx}  ·  📤 {month_tx}  ·  共 {month_total}\n━━━━━━━━━━━━\n{machine_lines}",
+    machine_line: "{status} {m_id} · {hostname}\n    📅 今日  📥 {today_rx}  ·  📤 {today_tx}\n    📅 本月  📥 {month_rx}  ·  📤 {month_tx}",
   },
 ];
 
@@ -1535,36 +1558,72 @@ async function setConfigValue(env, key, value) {
   ).bind(key, value, now).run();
 }
 
+/** 规范化模板列表：trim id、去空、去重，保证下拉 value 可回显 */
+function normalizeTemplateList(templates) {
+  const arr = Array.isArray(templates) ? templates : [];
+  const seen = new Set();
+  const out = [];
+  let dirty = false;
+  for (const x of arr) {
+    if (!x || typeof x !== "object") { dirty = true; continue; }
+    let id = String(x.id || "").trim();
+    if (!id) { id = "tpl_" + Math.random().toString(36).slice(2, 8); dirty = true; }
+    if (String(x.id || "") !== id) dirty = true;
+    if (seen.has(id)) { dirty = true; continue; }
+    seen.add(id);
+    out.push({
+      id,
+      name: String(x.name || id).slice(0, 40),
+      builtin: !!x.builtin,
+      body: String(x.body || ""),
+      machine_line: String(x.machine_line || ""),
+    });
+  }
+  return { list: out, dirty };
+}
+
 /** 读取所有模板（首次自动写入内置）；active 默认 card */
 async function getTemplates(env) {
   let raw = await getConfigValue(env, "tg_templates");
   let arr = null;
-  if (raw) { try { arr = JSON.parse(raw); } catch {} }
-  if (!Array.isArray(arr) || !arr.length) {
+  let dirty = false;
+  if (raw) {
+    try { arr = JSON.parse(raw); } catch { arr = null; dirty = true; }
+  }
+  const norm = normalizeTemplateList(arr);
+  arr = norm.list;
+  dirty = dirty || norm.dirty;
+  if (!arr.length) {
     arr = BUILTIN_TEMPLATES.map(x => ({ ...x }));
     await setConfigValue(env, "tg_templates", JSON.stringify(arr));
+  } else if (dirty) {
+    // 空 id / 重复 id 会导致 <select> 无法回显；写回干净列表
+    try { await setConfigValue(env, "tg_templates", JSON.stringify(arr)); } catch { /* ignore */ }
   }
-  let active = (await getConfigValue(env, "tg_active")) || "card";
-  // active 指向不存在的 id 时回退到首个模板
+  let active = String((await getConfigValue(env, "tg_active")) || "card").trim();
   if (!arr.some((x) => x && x.id === active)) {
     active = (arr[0] && arr[0].id) || "card";
+    try { await setConfigValue(env, "tg_active", active); } catch { /* ignore */ }
   }
   return { templates: arr, active };
 }
 
 async function saveTemplates(env, templates, active) {
   if (!Array.isArray(templates)) return { ok: false, error: "templates 应为数组" };
-  const clean = templates.filter(x => x && typeof x === "object").map(x => ({
-    id: String(x.id || "").trim() || ("tpl_" + Math.random().toString(36).slice(2, 8)),
-    name: String(x.name || "未命名").slice(0, 40),
-    builtin: !!x.builtin,
-    body: String(x.body || "").slice(0, 4000),
-    machine_line: String(x.machine_line || "").slice(0, 500),
-  }));
+  const { list: clean } = normalizeTemplateList(templates.map(x => ({
+    id: x && x.id,
+    name: x && x.name,
+    builtin: x && x.builtin,
+    body: x && String(x.body || "").slice(0, 4000),
+    machine_line: x && String(x.machine_line || "").slice(0, 500),
+  })));
+  if (!clean.length) return { ok: false, error: "模板列表为空" };
   await setConfigValue(env, "tg_templates", JSON.stringify(clean));
-  let act = active ? String(active) : ((await getConfigValue(env, "tg_active")) || "card");
+  let act = active != null && active !== ""
+    ? String(active).trim()
+    : String((await getConfigValue(env, "tg_active")) || "card").trim();
   if (!clean.some((x) => x.id === act)) {
-    act = (clean[0] && clean[0].id) || "card";
+    act = clean[0].id;
   }
   await setConfigValue(env, "tg_active", act);
   return { ok: true, templates: clean, active: act };
@@ -1975,7 +2034,7 @@ textarea:focus{border-color:#3b82f6}
         </div>
         <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
         <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
-        <select id="range" onchange="loadHistory()" title="仅「日内」可选跨度"></select>
+        <select id="range" onchange="loadHistory()" title="选择统计跨度"></select>
       </div>
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
@@ -2169,7 +2228,7 @@ textarea:focus{border-color:#3b82f6}
       </div>
       <label class="chk"><input type="checkbox" id="histChkRx" checked onchange="renderHistChart()"> 入站</label>
       <label class="chk"><input type="checkbox" id="histChkTx" checked onchange="renderHistChart()"> 出站</label>
-      <select id="histRange" onchange="loadHistModal()" title="仅「日内」可选跨度"></select>
+      <select id="histRange" onchange="loadHistModal()" title="选择统计跨度"></select>
     </div>
     <div class="chart-wrap" style="height:320px"><canvas id="histChart"></canvas></div>
     <div class="btn-row" style="margin-top:14px">
@@ -2253,23 +2312,55 @@ let mainPoints = [];         // 总览聚合点
 let histPoints = [];         // 单机聚合点
 let histMid = null;
 
-/** 统计口径：UI mode → API mode/span + 文案
- *  周报=近 7 天按日；月报=近 30 天按日；年报=近 12 个月按月；日内=小时折线
+/** 统计口径：UI mode → API mode + 默认跨度 + 文案
+ *  周报=按日；月报=按日可选天数；年报=按月；日内=小时折线
  */
 const CHART_PRESETS = {
-  hour:  { api: "hour",  span: 24, chart: "line", title: "日内小时增量", desc: "近 24 小时各整点新增流量（折线）" },
-  week:  { api: "day",   span: 7,  chart: "bar",  title: "周报 · 近 7 天", desc: "最近 7 天每日累计（柱状）" },
-  month: { api: "day",   span: 30, chart: "bar",  title: "月报 · 近 30 天", desc: "最近一个月每天累计（柱状）" },
-  year:  { api: "month", span: 12, chart: "bar",  title: "年报 · 近 12 月", desc: "最近 12 个月每月累计（柱状）" },
+  hour:  { api: "hour",  span: 24, chart: "line", title: "日内小时增量", desc: "近 N 小时各整点新增流量（折线）" },
+  week:  { api: "day",   span: 7,  chart: "bar",  title: "周报", desc: "按日累计柱状（可选近 7/14 天）" },
+  month: { api: "day",   span: 31, chart: "bar",  title: "月报", desc: "按日累计柱状（最长近 31 天）" },
+  year:  { api: "month", span: 12, chart: "bar",  title: "年报", desc: "按月累计柱状（可选近 6/12/24 月）" },
 };
 function normalizeChartMode(m) {
   if (m === "hour" || m === "week" || m === "month" || m === "year") return m;
-  // 兼容旧 localStorage：day→week，旧 month 若曾表示「月累计」现改为 year 更贴近「年」；保留 hour
   if (m === "day") return "week";
   return "week";
 }
 function chartPreset(mode) {
   return CHART_PRESETS[normalizeChartMode(mode)] || CHART_PRESETS.week;
+}
+/** 各模式下可选跨度 */
+function rangeOptionsFor(mode) {
+  mode = normalizeChartMode(mode);
+  if (mode === "hour") return [["12","近 12 小时"],["24","近 24 小时"],["48","近 48 小时"],["72","近 72 小时"]];
+  if (mode === "week") return [["7","近 7 天"],["14","近 14 天"]];
+  // 月报按「一个自然月」口径，最长 31 天
+  if (mode === "month") return [["7","近 7 天"],["14","近 14 天"],["31","近 31 天"]];
+  if (mode === "year") return [["6","近 6 月"],["12","近 12 月"],["24","近 24 月"]];
+  return [["7","近 7 天"]];
+}
+function clampSpan(mode, span) {
+  const n = Math.max(1, Number(span) || 0);
+  mode = normalizeChartMode(mode);
+  if (mode === "hour") return Math.min(72, n || 24);
+  if (mode === "week") return Math.min(14, n || 7);
+  if (mode === "month") return Math.min(31, n || 31); // 月报最大 31 天
+  if (mode === "year") return Math.min(24, n || 12);
+  return n || 7;
+}
+function chartTitleWithSpan(mode, span) {
+  const p = chartPreset(mode);
+  const n = Number(span) || p.span;
+  if (mode === "hour") return p.title + " · 近 " + n + " 小时";
+  if (mode === "year") return p.title + " · 近 " + n + " 月";
+  return p.title + " · 近 " + n + " 天";
+}
+function readSpan(selId, mode) {
+  const p = chartPreset(mode);
+  const el = document.getElementById(selId);
+  const v = el ? Number(el.value) : NaN;
+  const raw = (Number.isFinite(v) && v > 0) ? v : p.span;
+  return clampSpan(mode, raw);
 }
 
 function switchTab(name) {
@@ -2509,30 +2600,19 @@ async function batchAction(action) {
 function fillRangeOptions(sel, mode) {
   if (!sel) return;
   mode = normalizeChartMode(mode);
-  // 周/月/年跨度固定，下拉只展示说明且禁用；日内可选 12/24/48/72 小时
-  if (mode !== "hour") {
-    const p = chartPreset(mode);
-    sel.replaceChildren();
-    const o = document.createElement("option");
-    o.value = String(p.span);
-    o.textContent = mode === "week" ? "固定 · 近 7 天"
-      : mode === "month" ? "固定 · 近 30 天"
-      : "固定 · 近 12 月";
-    sel.appendChild(o);
-    sel.value = String(p.span);
-    sel.disabled = true;
-    return;
-  }
+  const opts = rangeOptionsFor(mode);
+  const p = chartPreset(mode);
+  let prefer = null;
+  try { prefer = localStorage.getItem("dash_chart_span_" + mode); } catch { /* ignore */ }
+  const cur = prefer || sel.value || String(p.span);
   sel.disabled = false;
-  const cur = sel.value;
-  const opts = [["12","近 12 小时"],["24","近 24 小时"],["48","近 48 小时"],["72","近 72 小时"]];
   sel.replaceChildren();
   for (const [v, t] of opts) {
     const o = document.createElement("option");
     o.value = v; o.textContent = t;
     sel.appendChild(o);
   }
-  sel.value = opts.some(x => x[0] === cur) ? cur : "24";
+  sel.value = opts.some(x => x[0] === String(cur)) ? String(cur) : String(p.span);
 }
 
 function saveChartPrefs() {
@@ -2541,7 +2621,7 @@ function saveChartPrefs() {
     const rx = document.getElementById("chkRx");
     const tx = document.getElementById("chkTx");
     localStorage.setItem("dash_chart_mode", chartMode);
-    if (chartMode === "hour" && r && r.value) localStorage.setItem("dash_chart_span_hour", r.value);
+    if (r && r.value) localStorage.setItem("dash_chart_span_" + chartMode, r.value);
     if (rx) localStorage.setItem("dash_chart_rx", rx.checked ? "1" : "0");
     if (tx) localStorage.setItem("dash_chart_tx", tx.checked ? "1" : "0");
   } catch { /* ignore */ }
@@ -2557,12 +2637,6 @@ function setChartMode(mode) {
     b.classList.toggle("active", b.dataset.mode === chartMode);
   });
   fillRangeOptions(document.getElementById("range"), chartMode);
-  if (chartMode === "hour") {
-    try {
-      const saved = localStorage.getItem("dash_chart_span_hour");
-      if (saved) document.getElementById("range").value = saved;
-    } catch { /* ignore */ }
-  }
   saveChartPrefs();
   loadHistory();
 }
@@ -2575,14 +2649,83 @@ function setHistMode(mode) {
   const desc = document.getElementById("histModalDesc");
   if (desc) desc.textContent = chartPreset(histMode).desc;
   fillRangeOptions(document.getElementById("histRange"), histMode);
-  if (histMode === "hour") {
-    try {
-      const saved = localStorage.getItem("dash_chart_span_hour");
-      if (saved) document.getElementById("histRange").value = saved;
-    } catch { /* ignore */ }
-  }
   loadHistModal();
 }
+
+/** 格式化图上数值标签（GB）：0 不画；<10 留 2 位，否则 1 位，避免挤 */
+function fmtChartLabel(v) {
+  const n = Number(v) || 0;
+  if (!(n > 0)) return "";
+  if (n < 0.01) return n.toFixed(3);
+  if (n < 10) return n.toFixed(2);
+  if (n < 100) return n.toFixed(1);
+  return String(Math.round(n));
+}
+
+/** 柱顶 / 折线点旁显示数值（无第三方 datalabels 依赖） */
+const valueLabelPlugin = {
+  id: "valueLabels",
+  afterDatasetsDraw(chart) {
+    const { ctx, data, chartArea } = chart;
+    if (!chartArea) return;
+    const isBar = chart.config.type === "bar";
+    const n = (data.labels && data.labels.length) || 0;
+    if (!n) return;
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = "11px system-ui,Segoe UI,sans-serif";
+
+    if (isBar) {
+      // 堆叠柱：在整柱顶部标「入+出」合计
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "#c7d2fe";
+      for (let i = 0; i < n; i++) {
+        let sum = 0;
+        let topMeta = null;
+        for (let di = 0; di < data.datasets.length; di++) {
+          const ds = data.datasets[di];
+          if (ds.hidden) continue;
+          const v = Number(ds.data[i]) || 0;
+          sum += v;
+          const meta = chart.getDatasetMeta(di);
+          if (meta && meta.data && meta.data[i]) topMeta = meta.data[i];
+        }
+        if (!topMeta || !(sum > 0)) continue;
+        const t = fmtChartLabel(sum);
+        if (!t) continue;
+        const x = topMeta.x;
+        const y = Math.min(topMeta.y, chartArea.bottom) - 4;
+        if (y < chartArea.top + 2) continue;
+        ctx.fillText(t, x, y);
+      }
+    } else {
+      // 折线：每个可见数据集的点旁标自身值（略上移，双线时第二层再抬一点）
+      let visibleIdx = 0;
+      for (let di = 0; di < data.datasets.length; di++) {
+        const ds = data.datasets[di];
+        const meta = chart.getDatasetMeta(di);
+        if (!meta || meta.hidden || ds.hidden) continue;
+        const color = ds.borderColor || "#c7d2fe";
+        ctx.fillStyle = typeof color === "string" ? color : "#c7d2fe";
+        ctx.textBaseline = "bottom";
+        const lift = 6 + visibleIdx * 12;
+        for (let i = 0; i < n; i++) {
+          const el = meta.data[i];
+          if (!el) continue;
+          const v = Number(ds.data[i]) || 0;
+          const t = fmtChartLabel(v);
+          if (!t) continue;
+          const y = el.y - lift;
+          if (y < chartArea.top + 2) continue;
+          ctx.fillText(t, el.x, y);
+        }
+        visibleIdx++;
+      }
+    }
+    ctx.restore();
+  },
+};
 
 /** 折线：日内小时增量（入/出分色） */
 function buildLineChart(canvas, points, opts) {
@@ -2638,10 +2781,12 @@ function buildLineChart(canvas, points, opts) {
   return new Chart(canvas, {
     type: "line",
     data: { labels, datasets },
+    plugins: [valueLabelPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
+      layout: { padding: { top: 18, right: 8 } },
       scales: {
         x: {
           ticks: { maxTicksLimit: 12, color: "#8aa0c6", maxRotation: 0, autoSkip: true },
@@ -2716,15 +2861,25 @@ function buildStackedChart(canvas, points, opts) {
   return new Chart(canvas, {
     type: "bar",
     data: { labels, datasets },
+    plugins: [valueLabelPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
+      layout: { padding: { top: 22, right: 6 } },
       datasets: { bar: { categoryPercentage: 0.65, barPercentage: 0.9, maxBarThickness: 36 } },
       scales: {
         x: {
           stacked: true,
-          ticks: { maxTicksLimit: 14, color: "#8aa0c6", maxRotation: 0, autoSkip: true },
+          ticks: {
+            // 月报最长 31 天，刻度上限对齐
+            maxTicksLimit: 31,
+            color: "#8aa0c6",
+            maxRotation: 45,
+            minRotation: 0,
+            autoSkip: true,
+            autoSkipPadding: 4,
+          },
           grid: { display: false },
         },
         y: {
@@ -2760,16 +2915,12 @@ function renderMainChart() {
   const showTx = document.getElementById("chkTx").checked;
   saveChartPrefs();
   const p = chartPreset(chartMode);
+  const span = readSpan("range", chartMode);
+  const title = "全部机器 · " + chartTitleWithSpan(chartMode, span);
   if (p.chart === "line") {
-    chart = buildLineChart(ctx, mainPoints, {
-      showRx, showTx,
-      title: "全部机器 · " + p.title,
-    });
+    chart = buildLineChart(ctx, mainPoints, { showRx, showTx, title });
   } else {
-    chart = buildStackedChart(ctx, mainPoints, {
-      showRx, showTx,
-      title: "全部机器 · " + p.title,
-    });
+    chart = buildStackedChart(ctx, mainPoints, { showRx, showTx, title });
   }
 }
 
@@ -2781,29 +2932,23 @@ function renderHistChart() {
   const showRx = document.getElementById("histChkRx").checked;
   const showTx = document.getElementById("histChkTx").checked;
   const p = chartPreset(histMode);
+  const span = readSpan("histRange", histMode);
+  const title = (histMid || "") + " · " + chartTitleWithSpan(histMode, span);
   if (p.chart === "line") {
-    histChart = buildLineChart(ctx, histPoints, {
-      showRx, showTx,
-      title: (histMid || "") + " · " + p.title,
-    });
+    histChart = buildLineChart(ctx, histPoints, { showRx, showTx, title });
   } else {
-    histChart = buildStackedChart(ctx, histPoints, {
-      showRx, showTx,
-      title: (histMid || "") + " · " + p.title,
-    });
+    histChart = buildStackedChart(ctx, histPoints, { showRx, showTx, title });
   }
 }
 
 async function loadHistory() {
   try {
     const p = chartPreset(chartMode);
-    let span = p.span;
-    if (chartMode === "hour") {
-      span = Number(document.getElementById("range").value || p.span) || p.span;
-    }
+    const span = readSpan("range", chartMode);
     const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
     const data = await api(q);
     mainPoints = (data && data.points) || [];
+    await whenChartReady();
     renderMainChart();
     saveChartPrefs();
   } catch (e) {
@@ -2820,12 +2965,6 @@ function openHistModal(mid) {
     b.classList.toggle("active", b.dataset.mode === histMode);
   });
   fillRangeOptions(document.getElementById("histRange"), histMode);
-  if (histMode === "hour") {
-    try {
-      const saved = localStorage.getItem("dash_chart_span_hour");
-      if (saved) document.getElementById("histRange").value = saved;
-    } catch { /* ignore */ }
-  }
   document.getElementById("histChkRx").checked = document.getElementById("chkRx").checked;
   document.getElementById("histChkTx").checked = document.getElementById("chkTx").checked;
   document.getElementById("histModal").classList.add("open");
@@ -2842,10 +2981,7 @@ async function loadHistModal() {
   if (!histMid) return;
   try {
     const p = chartPreset(histMode);
-    let span = p.span;
-    if (histMode === "hour") {
-      span = Number(document.getElementById("histRange").value || p.span) || p.span;
-    }
+    const span = readSpan("histRange", histMode);
     const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span)
       + "&mid=" + encodeURIComponent(histMid);
     const data = await api(q);
@@ -2920,10 +3056,7 @@ async function refresh(opts = {}) {
   _refreshInFlight = (async () => {
     try {
       const p = chartPreset(chartMode);
-      let span = p.span;
-      if (chartMode === "hour") {
-        span = Number((document.getElementById("range") || {}).value || p.span) || p.span;
-      }
+      const span = readSpan("range", chartMode);
       const histQ = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
 
       const tasks = [api("/api/machines")];
@@ -2962,10 +3095,7 @@ async function refresh(opts = {}) {
 async function loadHistory() {
   try {
     const p = chartPreset(chartMode);
-    let span = p.span;
-    if (chartMode === "hour") {
-      span = Number(document.getElementById("range").value || p.span) || p.span;
-    }
+    const span = readSpan("range", chartMode);
     const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
     const data = await api(q);
     mainPoints = (data && data.points) || [];
@@ -3067,42 +3197,108 @@ let tplList = [];
 let tplActiveId = "card";
 let tplEditingId = "";
 
+function normalizeTplClient(list) {
+  const arr = Array.isArray(list) ? list : [];
+  const seen = new Set();
+  const out = [];
+  for (const x of arr) {
+    if (!x || typeof x !== "object") continue;
+    let id = String(x.id || "").trim();
+    if (!id) id = "tpl_" + Math.random().toString(36).slice(2, 8);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: String(x.name || id).slice(0, 40),
+      builtin: !!x.builtin,
+      body: String(x.body || ""),
+      machine_line: String(x.machine_line || ""),
+    });
+  }
+  return out;
+}
+
 async function loadTemplates() {
   try {
     const d = await api("/api/tg-templates");
     if (!d || !d.ok) return;
-    tplList = d.templates || [];
-    tplActiveId = d.active || "card";
+    tplList = normalizeTplClient(d.templates || []);
+    tplActiveId = String(d.active || "card").trim();
+    if (!tplList.some(t => t.id === tplActiveId)) {
+      tplActiveId = (tplList[0] && tplList[0].id) || "card";
+    }
+    tplEditingId = tplActiveId;
     renderTplUI();
   } catch (e) { /* ignore */ }
 }
 function curTpl() {
-  return tplList.find(x => x.id === (tplEditingId || tplActiveId)) || tplList[0] || { id:"", name:"", body:"", machine_line:"" };
+  const id = String(tplEditingId || tplActiveId || "").trim();
+  return tplList.find(x => x.id === id) || tplList[0] || { id:"", name:"", body:"", machine_line:"" };
 }
 function renderTplUI() {
   const sel = document.getElementById("tplActive");
   if (sel) {
+    const keep = String(tplEditingId || tplActiveId || "").trim();
     sel.replaceChildren();
     for (const t of tplList) {
       const o = document.createElement("option");
-      o.value = t.id; o.textContent = (t.builtin ? "★ " : "") + (t.name || t.id);
+      o.value = t.id;
+      o.textContent = (t.builtin ? "★ " : "") + (t.name || t.id);
       sel.appendChild(o);
     }
-    sel.value = tplActiveId;
+    // 优先回显正在编辑的项；对不上则回退 active / 第一项
+    if (keep && tplList.some(t => t.id === keep)) {
+      sel.value = keep;
+      tplEditingId = keep;
+    } else if (tplActiveId && tplList.some(t => t.id === tplActiveId)) {
+      sel.value = tplActiveId;
+      tplEditingId = tplActiveId;
+    } else if (tplList[0]) {
+      sel.value = tplList[0].id;
+      tplEditingId = tplList[0].id;
+      tplActiveId = tplList[0].id;
+    }
   }
   const c = curTpl();
-  tplEditingId = c.id;
+  if (c && c.id) tplEditingId = c.id;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
   set("tplName", c.name); set("tplBody", c.body); set("tplLine", c.machine_line);
 }
-function onTplActiveChange() {
-  tplActiveId = document.getElementById("tplActive").value;
-  tplEditingId = tplActiveId;
+async function onTplActiveChange() {
+  const sel = document.getElementById("tplActive");
+  const id = sel ? String(sel.value || "").trim() : "";
+  if (!id || !tplList.some(t => t.id === id)) {
+    renderTplUI();
+    return;
+  }
+  // 切换前把当前编辑框写回列表，避免「改了没保存就丢」
+  const prev = curTpl();
+  if (prev && prev.id) {
+    const idx = tplList.findIndex(x => x.id === prev.id);
+    if (idx >= 0) {
+      tplList[idx] = {
+        ...tplList[idx],
+        name: (document.getElementById("tplName") || {}).value || tplList[idx].name,
+        body: (document.getElementById("tplBody") || {}).value || "",
+        machine_line: (document.getElementById("tplLine") || {}).value || "",
+      };
+    }
+  }
+  tplEditingId = id;
+  tplActiveId = id; // 下拉即当前汇报用模板
   renderTplUI();
+  // 立即持久化 active + 列表（含刚才写回的编辑），避免下次进来下拉空白/错位
+  await saveTplAll("已切换模板", { quiet: true });
 }
 function tplNew() {
   const id = "tpl_" + Math.random().toString(36).slice(2, 8);
-  const t = { id, name: "新模板", builtin: false, body: "📊 流量汇总\\n时间：{time}\\n{machine_lines}", machine_line: "{status} {m_id} 入{today_rx}/出{today_tx}" };
+  const t = {
+    id,
+    name: "新模板",
+    builtin: false,
+    body: "流量汇总\\n时间：{time}\\n{machine_lines}",
+    machine_line: "{status} {m_id} 入{today_rx}/出{today_tx}",
+  };
   tplList.push(t); tplEditingId = id; tplActiveId = id;
   renderTplUI();
 }
@@ -3112,16 +3308,19 @@ function tplDelete() {
   if (c.builtin) { toast("内置模板不可删除"); return; }
   if (!confirm("删除模板「" + (c.name || c.id) + "」？")) return;
   tplList = tplList.filter(x => x.id !== c.id);
-  if (tplActiveId === c.id) tplActiveId = tplList[0]?.id || "card";
+  if (tplActiveId === c.id) tplActiveId = (tplList[0] && tplList[0].id) || "card";
   tplEditingId = tplActiveId;
   saveTplAll("已删除");
 }
 async function tplReset() {
   if (!confirm("恢复为内置 3 个模板？自定义模板会丢失。")) return;
+  // 直接用接口返回的内置结构：body 中的 \\n 在本文件模板字符串里会变成浏览器源码的 \\n 字面量？
+  // 这里用 String.fromCharCode(10) 拼换行，避免转义层次混乱。
+  const NL = String.fromCharCode(10);
   tplList = [
-    { id:"card", name:"📊 卡片日报", builtin:true, body:"📊 流量日报\\n━━━━━━━━━━━━━\\n🕐 {time}\\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\\n\\n📥 今日  入 {today_rx} ｜ 出 {today_tx}\\n🟰 合计 {today_total}\\n📅 本月  入 {month_rx} ｜ 出 {month_tx}\\n🟰 合计 {month_total}\\n━━━━━━━━━━━━━\\n{machine_lines}", machine_line:"{status} {m_id}  📥{today_rx} 📤{today_tx}" },
-    { id:"detail", name:"⚡ 今日排行", builtin:true, body:"⚡ 今日排行 · {time}\\n在线 {online_count}/{host_count} · 合计 {today_total}\\n────────────────\\n{machine_lines}\\n本月累计 {month_total}", machine_line:"{status} {m_id}  ↑{today_rx} ↓{today_tx}" },
-    { id:"brief", name:"📈 详细日报", builtin:true, body:"📈 详细日报 · {time}\\n主机 {host_count} 台（在线 {online_count}）\\n\\n今日  入 {today_rx}  出 {today_tx}  共 {today_total}\\n本月  入 {month_rx}  出 {month_tx}  共 {month_total}\\n┄┄┄┄┄┄┄┄┄┄┄┄┄┄\\n{machine_lines}", machine_line:"{status} {m_id} · {hostname}\\n    日 {today_rx}/{today_tx} · 月 {month_rx}/{month_tx}" },
+    { id:"card", name:"📊 卡片日报", builtin:true, body:["📊 流量日报","━━━━━━━━━━━━","🕐 时间：{time}","🖥 主机：{host_count} 台（🟢 {online_count} 在线）","","📥 今日入站  {today_rx}","📤 今日出站  {today_tx}","📦 今日合计  {today_total}","","📥 本月入站  {month_rx}","📤 本月出站  {month_tx}","📦 本月合计  {month_total}","━━━━━━━━━━━━","{machine_lines}"].join(NL), machine_line:["{status} {m_id}","    📥 {today_rx}  ·  📤 {today_tx}"].join(NL) },
+    { id:"detail", name:"🏆 今日排行", builtin:true, body:["🏆 今日排行","🕐 时间：{time}","🟢 在线：{online_count}/{host_count} 台","📦 今日合计：{today_total}","━━━━━━━━━━━━","{machine_lines}","━━━━━━━━━━━━","📅 本月累计：{month_total}"].join(NL), machine_line:["{status} {m_id}","    📥 {today_rx}  ·  📤 {today_tx}"].join(NL) },
+    { id:"brief", name:"📋 详细日报", builtin:true, body:["📋 详细日报","🕐 时间：{time}","🖥 主机：{host_count} 台（🟢 {online_count} 在线）","","📦 今日  📥 {today_rx}  ·  📤 {today_tx}  ·  共 {today_total}","📦 本月  📥 {month_rx}  ·  📤 {month_tx}  ·  共 {month_total}","━━━━━━━━━━━━","{machine_lines}"].join(NL), machine_line:["{status} {m_id} · {hostname}","    📅 今日  📥 {today_rx}  ·  📤 {today_tx}","    📅 本月  📥 {month_rx}  ·  📤 {month_tx}"].join(NL) },
   ];
   tplActiveId = "card"; tplEditingId = "card";
   await saveTplAll("已恢复内置");
@@ -3137,19 +3336,34 @@ async function tplSave() {
     machine_line: document.getElementById("tplLine").value,
   };
   if (idx >= 0) tplList[idx] = updated; else tplList.push(updated);
+  tplEditingId = updated.id;
+  tplActiveId = updated.id;
   await saveTplAll("模板已保存");
 }
-async function saveTplAll(msg) {
+async function saveTplAll(msg, opts) {
+  const quiet = !!(opts && opts.quiet);
   try {
+    tplList = normalizeTplClient(tplList);
+    if (!tplList.length) { toast("模板列表为空"); return; }
+    if (!tplList.some(t => t.id === tplActiveId)) {
+      tplActiveId = tplList[0].id;
+    }
     const d = await api("/api/tg-templates", {
       method: "POST",
       body: JSON.stringify({ templates: tplList, active: tplActiveId }),
     });
     if (!d || !d.ok) { toast(d?.error || "保存失败"); return; }
-    tplList = d.templates || tplList;
-    tplActiveId = d.active || tplActiveId;
+    tplList = normalizeTplClient(d.templates || tplList);
+    tplActiveId = String(d.active || tplActiveId).trim();
+    if (!tplList.some(t => t.id === tplActiveId)) {
+      tplActiveId = (tplList[0] && tplList[0].id) || "card";
+    }
+    if (!tplList.some(t => t.id === tplEditingId)) tplEditingId = tplActiveId;
     renderTplUI();
-    const st = document.getElementById("tplStatus"); if (st) { st.textContent = "✓ " + msg; setTimeout(() => st.textContent = "", 2500); }
+    if (!quiet) {
+      const st = document.getElementById("tplStatus");
+      if (st) { st.textContent = "✓ " + msg; setTimeout(() => st.textContent = "", 2500); }
+    }
   } catch (e) { toast("保存失败：" + (e && e.message ? e.message : e)); }
 }
 async function tplPreview() {
@@ -3645,13 +3859,6 @@ document.querySelectorAll("#modeSeg button").forEach(b => {
   b.classList.toggle("active", b.dataset.mode === chartMode);
 });
 fillRangeOptions(document.getElementById("range"), chartMode);
-// 仅日内恢复可选跨度
-if (chartMode === "hour") {
-  try {
-    const savedSpan = localStorage.getItem("dash_chart_span_hour");
-    if (savedSpan) document.getElementById("range").value = savedSpan;
-  } catch { /* ignore */ }
-}
 tickDashClock();
 setInterval(tickDashClock, 1000);
 refresh();

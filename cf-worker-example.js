@@ -65,6 +65,7 @@ const html = (body, status = 200, extra = {}) =>
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-language": "zh-CN",
+      "cache-control": "no-cache, no-store, must-revalidate",
       ...extra,
     },
   });

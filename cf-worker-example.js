@@ -424,7 +424,7 @@ async function getOrCreateVpsToken(env, mid) {
   const existing = await env.DB.prepare(
     `SELECT token FROM vps_tokens WHERE machine_id = ?`
   ).bind(mid).first();
-  if (existing) return existing.token;
+  if (existing) return String(existing.token || "").trim();
 
   // 生成 32 字节 hex token
   const buf = new Uint8Array(32);
@@ -841,6 +841,8 @@ async function httpPostViaTcpSocket(urlStr, headerMap, bodyStr, timeoutMs = 1000
  * - 裸 IP：TCP sockets 发 HTTP（避免 CF Error 1003）
  */
 async function pushForceToCallback(callbackUrl, token, forceAt) {
+  // 与 VPS conf 一致：去掉首尾空白，避免 D1/复制带入空格导致 401 unauthorized
+  token = String(token || "").replace(/\r/g, "").trim();
   const bodyObj = { cmd: "force_report", at: forceAt };
   const body = JSON.stringify(bodyObj);
   const ts = String(Math.floor(Date.now() / 1000));
@@ -939,7 +941,8 @@ async function forceReportPushAll(env) {
   for (let i = 0; i < targets.length; i += concurrency) {
     const chunk = targets.slice(i, i + concurrency);
     const part = await Promise.all(chunk.map(async (t) => {
-      const r = await pushForceToCallback(t.callback_url, t.token, force_at);
+      const tok = String(t.token || "").replace(/\r/g, "").trim();
+      const r = await pushForceToCallback(t.callback_url, tok, force_at);
       return { machine_id: t.machine_id, callback_url: t.callback_url, ...r };
     }));
     resultsPush.push(...part);
@@ -1833,6 +1836,12 @@ function reasonLabel(state, detail, status) {
     }
     if (/无 HTTP 响应|非 HTTP/i.test(d)) {
       return d.slice(0, 160);
+    }
+    if (/token length mismatch|token mismatch|missing bearer|unauthorized/i.test(d)) {
+      return "鉴权失败（看板 token 与 VPS 上 CF_TOKEN 不一致）。请在看板点「更新注册」复制命令，在 VPS 重跑安装，确保两边 token 相同 · " + d.slice(0, 80);
+    }
+    if (/bad signature/i.test(d)) {
+      return "HMAC 签名不匹配（token 可能一致但 body/时间戳异常）· " + d.slice(0, 80);
     }
     if (/401|403|签名|sig|auth/i.test(d) && status) {
       return "HTTP " + status + " 鉴权/拒绝 · " + d.slice(0, 100);

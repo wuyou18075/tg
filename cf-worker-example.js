@@ -2267,7 +2267,9 @@ textarea:focus{border-color:var(--accent)}
 .clock b{color:var(--text);font-weight:600;margin-left:4px}
 
 /* 看板双栏：排行 + 总统计 */
-.dash-grid{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(360px,1.2fr);gap:14px;margin-bottom:16px;align-items:stretch}
+.dash-grid{display:grid;grid-template-columns:minmax(360px,1.2fr) minmax(280px,.9fr);gap:14px;margin-bottom:16px;align-items:stretch}
+.dash-grid.single{grid-template-columns:1fr}
+.dash-grid.is-hidden{display:none}
 @media (max-width:960px){.dash-grid{grid-template-columns:1fr}}
 .rank-panel .rank-wrap{height:auto;min-height:220px}
 .rank-panel .chart-wrap{height:auto;min-height:220px}
@@ -2286,6 +2288,24 @@ textarea:focus{border-color:var(--accent)}
 .panel h2{font-size:14px;margin:0 0 12px;color:var(--label);font-weight:600;letter-spacing:.2px}
 .chart-title-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
 .chart-title-row h2{margin:0}
+
+.clip-cell,.clip-meta{max-width:11em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:keep-all}
+td.clip-cell{max-width:12em}
+.m-card-time{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+
+/* 卡片内横向流量条 */
+.m-card-bars{display:flex;flex-direction:column;gap:5px;margin-top:2px;padding:8px;border:1px solid var(--line2);border-radius:10px;background:var(--panel)}
+.m-bar-sec{font-size:11px;color:var(--muted);font-weight:600;margin-top:2px}
+.m-bar-sec:first-child{margin-top:0}
+.m-bar-row{display:grid;grid-template-columns:18px 1fr auto;gap:6px;align-items:center}
+.m-bar-lab{font-size:11px;color:var(--label);text-align:center}
+.m-bar-track{height:8px;border-radius:999px;background:var(--line2);overflow:hidden;min-width:0}
+.m-bar-fill{height:100%;border-radius:999px;min-width:0;transition:width .25s ease}
+.m-bar-fill.rx{background:var(--rx)}
+.m-bar-fill.tx{background:var(--tx)}
+.m-bar-num{font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;min-width:4.2em;text-align:right}
+.m-bar-num.rx{color:var(--rx)}
+.m-bar-num.tx{color:var(--tx)}
 
 /* theme token: 原谅色（prairie）— 柔雾浅绿 + 图表冷暖对比 */
 html[data-theme="prairie"]{
@@ -3193,12 +3213,18 @@ textarea:focus{border-color:var(--accent)}
   <div id="pageDash" class="page active">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
       <button class="primary" onclick="openAddVps()">＋ 添加 VPS</button>
-      <button onclick="refresh()">刷新</button>
+      <button onclick="refresh({ notify: true })">刷新</button>
       <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口立即上报（需公网；无 poll）">获取流量</button>
       <label class="chk" title="勾选后在主页显示总流量统计图；关闭可省空间且不请求统计接口">
         <input type="checkbox" id="chkShowChart" checked onchange="setChartPanelVisible(this.checked)"> 总流量统计
       </label>
+      <label class="chk" title="勾选后显示机器横向流量排行；与总流量统计同时开启时排行在右侧">
+        <input type="checkbox" id="chkShowRank" checked onchange="setRankPanelVisible(this.checked)"> 机器流量排行
+      </label>
       <label class="chk"><input type="checkbox" id="filterOnline" onchange="onFilterSortChange()"> 只看在线</label>
+      <label class="chk" title="勾选：页面显示入站+出站；取消：页面只显示出站（TG 汇报仍含入出站）">
+        <input type="checkbox" id="chkShowRx" checked onchange="setShowInbound(this.checked)"> 入站统计
+      </label>
       <select id="filterGroup" onchange="onFilterSortChange()" title="按分组筛选" style="width:auto;min-width:110px">
         <option value="">全部分组</option>
         <option value="__none__">未分组</option>
@@ -3222,19 +3248,8 @@ textarea:focus{border-color:var(--accent)}
     </div>
     <div class="cards" id="summary"></div>
 
-    <div class="dash-grid">
-      <div class="panel rank-panel" id="rankPanel">
-        <div class="chart-title-row">
-          <h2>机器流量排行</h2>
-          <div class="seg" id="rankSeg">
-            <button type="button" class="active" data-rank="today" onclick="setRankMode('today')">今日</button>
-            <button type="button" data-rank="month" onclick="setRankMode('month')">本月</button>
-          </div>
-        </div>
-        <div class="chart-wrap rank-wrap"><canvas id="rankChart"></canvas></div>
-        <div class="muted" style="font-size:11px;margin-top:6px">横向柱：每台机器入站/出站；按合计降序</div>
-      </div>
-
+    <div class="dash-grid" id="dashGrid">
+      <!-- 同时开启时：总流量统计在左，机器排行在右 -->
       <div class="panel" id="chartPanel">
         <div class="chart-title-row">
           <h2 id="chartPanelTitle">总流量统计</h2>
@@ -3254,6 +3269,18 @@ textarea:focus{border-color:var(--accent)}
           <div class="chart-wrap"><canvas id="chart"></canvas></div>
         </div>
       </div>
+
+      <div class="panel rank-panel" id="rankPanel">
+        <div class="chart-title-row">
+          <h2>机器流量排行</h2>
+          <div class="seg" id="rankSeg">
+            <button type="button" class="active" data-rank="today" onclick="setRankMode('today')">今日</button>
+            <button type="button" data-rank="month" onclick="setRankMode('month')">本月</button>
+          </div>
+        </div>
+        <div class="chart-wrap rank-wrap"><canvas id="rankChart"></canvas></div>
+        <div class="muted" style="font-size:11px;margin-top:6px">横向柱：每台机器入站/出站；按合计降序</div>
+      </div>
     </div>
     <div class="panel">
       <h2>机器列表</h2>
@@ -3271,7 +3298,7 @@ textarea:focus{border-color:var(--accent)}
           <thead><tr>
             <th style="width:36px"><input type="checkbox" id="checkAll" class="row-check" onchange="toggleAll(this.checked)"></th>
             <th>机器</th><th>分组</th><th>主机</th><th>网卡</th>
-            <th>今日入/出</th><th>本月入/出</th><th>累积在线</th><th>最后上报</th><th>状态</th><th>操作</th>
+            <th>今日流量</th><th>本月流量</th><th>累积在线</th><th>最后上报</th><th>状态</th><th>操作</th>
           </tr></thead>
           <tbody id="tbody"><tr><td colspan="11">加载中…</td></tr></tbody>
         </table>
@@ -3558,6 +3585,25 @@ textarea:focus{border-color:var(--accent)}
   </div>
 </div>
 
+<!-- 分组选择：下拉 + 可手写 -->
+<div class="modal-overlay" id="groupModal">
+  <div class="modal" style="width:min(420px,94vw)">
+    <h2 id="groupModalTitle">移动分组</h2>
+    <p class="desc" id="groupModalDesc">选择已有分组，或手写新分组名</p>
+    <label for="grpSelect">选择分组</label>
+    <select id="grpSelect" style="width:100%;margin:6px 0 12px" onchange="onGroupSelectChange()"></select>
+    <label for="grpCustom">手写分组名（优先；留空则用上方选择）</label>
+    <input id="grpCustom" type="text" maxlength="40" placeholder="例如：香港 / 日本 / 测试" style="width:100%;margin:6px 0 4px" autocomplete="off">
+    <div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:12px">
+      下拉可选已有分组或「未分组」。手写新名称会自动创建并移入。
+    </div>
+    <div class="btn-row">
+      <button class="primary" onclick="confirmGroupModal()">确定</button>
+      <button onclick="closeGroupModal()">取消</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -3612,11 +3658,66 @@ function setRankMode(mode) {
   document.querySelectorAll("#rankSeg button").forEach((b) => {
     b.classList.toggle("active", b.dataset.rank === rankMode);
   });
-  renderRankChart();
+  if (isRankPanelVisible()) renderRankChart();
+}
+
+function isRankPanelVisible() {
+  try { return localStorage.getItem("dash_show_rank") !== "0"; } catch { return true; }
+}
+
+function setRankPanelVisible(show, opts) {
+  const on = !!show;
+  try { localStorage.setItem("dash_show_rank", on ? "1" : "0"); } catch {}
+  const panel = document.getElementById("rankPanel");
+  const chk = document.getElementById("chkShowRank");
+  if (panel) {
+    panel.classList.toggle("collapsed", !on);
+    panel.style.display = on ? "" : "none";
+  }
+  if (chk) chk.checked = on;
+  updateDashGridLayout();
+  if (!on) {
+    try { if (rankChart) { rankChart.destroy(); rankChart = null; } } catch {}
+    return;
+  }
+  if (!opts || opts.load !== false) {
+    whenChartReady().then(() => { try { renderRankChart(); } catch {} });
+  }
+}
+
+function restoreRankPanelVisible() {
+  const on = isRankPanelVisible();
+  const panel = document.getElementById("rankPanel");
+  const chk = document.getElementById("chkShowRank");
+  if (panel) {
+    panel.classList.toggle("collapsed", !on);
+    panel.style.display = on ? "" : "none";
+  }
+  if (chk) chk.checked = on;
+}
+
+/** 两个都开：总流量左、排行右；只开一个：单栏；都关：隐藏网格 */
+function updateDashGridLayout() {
+  const grid = document.getElementById("dashGrid");
+  if (!grid) return;
+  const chartOn = isChartPanelVisible();
+  const rankOn = isRankPanelVisible();
+  const chartPanel = document.getElementById("chartPanel");
+  const rankPanel = document.getElementById("rankPanel");
+  if (chartPanel) chartPanel.style.display = chartOn ? "" : "none";
+  if (rankPanel) rankPanel.style.display = rankOn ? "" : "none";
+  grid.classList.toggle("is-hidden", !chartOn && !rankOn);
+  grid.classList.toggle("single", (chartOn && !rankOn) || (!chartOn && rankOn));
+  grid.classList.toggle("both", chartOn && rankOn);
+  // 同时开启时保证顺序：总流量在左，排行在右
+  if (chartOn && rankOn && chartPanel && rankPanel && chartPanel.nextElementSibling !== rankPanel) {
+    grid.insertBefore(chartPanel, rankPanel);
+  }
 }
 
 /** 横向柱状图：各机器今日/本月 入出站排行 */
 function renderRankChart() {
+  if (!isRankPanelVisible()) return;
   const canvas = document.getElementById("rankChart");
   if (!canvas || typeof Chart === "undefined") return;
   const list = (machines || []).slice();
@@ -3654,39 +3755,65 @@ function renderRankChart() {
   canvas.style.height = h + "px";
 
   if (rankChart) { try { rankChart.destroy(); } catch {} rankChart = null; }
+  const datasets = [];
+  if (showInbound()) {
+    datasets.push({
+      label: "入站 GB",
+      data: rx,
+      backgroundColor: tc.rxSoft,
+      borderColor: tc.rx,
+      borderWidth: 1,
+      borderRadius: 4,
+      barPercentage: 0.75,
+      categoryPercentage: 0.7,
+    });
+  }
+  datasets.push({
+    label: "出站 GB",
+    data: tx,
+    backgroundColor: tc.txSoft,
+    borderColor: tc.tx,
+    borderWidth: 1,
+    borderRadius: 4,
+    barPercentage: 0.75,
+    categoryPercentage: 0.7,
+  });
+  // 横向柱末端画具体数值
+  const rankValueLabelPlugin = {
+    id: "rankValueLabels",
+    afterDatasetsDraw(c) {
+      if (c.options.indexAxis !== "y") return;
+      const { ctx, chartArea } = c;
+      ctx.save();
+      ctx.font = "11px system-ui,Segoe UI,sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = tc.label;
+      c.data.datasets.forEach((ds, di) => {
+        if (!ds || ds.hidden) return;
+        const meta = c.getDatasetMeta(di);
+        if (!meta || meta.hidden) return;
+        meta.data.forEach((el, i) => {
+          const v = Number(ds.data[i]) || 0;
+          if (!(v > 0) || !el) return;
+          const t = v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+          ctx.textAlign = "left";
+          const x = Math.min(el.x + 6, chartArea.right - 2);
+          ctx.fillText(t, x, el.y);
+        });
+      });
+      ctx.restore();
+    },
+  };
   rankChart = new Chart(canvas, {
     type: "bar",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "入站 GB",
-          data: rx,
-          backgroundColor: tc.rxSoft,
-          borderColor: tc.rx,
-          borderWidth: 1,
-          borderRadius: 4,
-          barPercentage: 0.75,
-          categoryPercentage: 0.7,
-        },
-        {
-          label: "出站 GB",
-          data: tx,
-          backgroundColor: tc.txSoft,
-          borderColor: tc.tx,
-          borderWidth: 1,
-          borderRadius: 4,
-          barPercentage: 0.75,
-          categoryPercentage: 0.7,
-        },
-      ],
-    },
+    data: { labels, datasets },
+    plugins: [rankValueLabelPlugin],
     options: {
       indexAxis: "y",
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
-      layout: { padding: { right: 28, top: 4, bottom: 4 } },
+      layout: { padding: { right: 48, top: 4, bottom: 4 } },
       plugins: {
         legend: {
           position: "top",
@@ -3872,21 +3999,33 @@ function toast(msg) {
 
 function online(ts) { return ts && ((Date.now()/1000 - ts) < 7200); }
 
+/** 列表展示截断：最多 max 字符，过长加…；完整内容放 title */
+function clipText(s, max) {
+  const t = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  const n = Math.max(4, Number(max) || 20);
+  if (!t) return "";
+  if (t.length <= n) return t;
+  return t.slice(0, n - 1) + "…";
+}
+
+
 function renderSummary() {
   const sum = machines.reduce((a,m)=>({
     today_rx: a.today_rx + (m.today?.rx||0), today_tx: a.today_tx + (m.today?.tx||0),
     month_rx: a.month_rx + (m.month?.rx||0), month_tx: a.month_tx + (m.month?.tx||0),
   }), {today_rx:0,today_tx:0,month_rx:0,month_tx:0});
   const on = machines.filter(m => online(m.ts)).length;
-  // 顺序：今日入站 / 本月入站 / 机器数 / 在线 / 今日出站(倒数第二) / 本月出站(最后)
-  document.getElementById("summary").innerHTML = [
-    '<div class="card"><div class="label">今日入站</div><div class="val rx">' + gb(sum.today_rx) + "</div></div>",
-    '<div class="card"><div class="label">本月入站</div><div class="val rx">' + gb(sum.month_rx) + "</div></div>",
-    '<div class="card"><div class="label">机器数</div><div class="val">' + machines.length + "</div></div>",
-    '<div class="card"><div class="label">在线（2h）</div><div class="val">' + on + "</div></div>",
-    '<div class="card"><div class="label">今日出站</div><div class="val tx">' + gb(sum.today_tx) + "</div></div>",
-    '<div class="card"><div class="label">本月出站</div><div class="val tx">' + gb(sum.month_tx) + "</div></div>",
-  ].join("");
+  // 关闭「入站统计」时页面只保留出站相关卡片（TG 仍含入出站）
+  const cards = [];
+  if (showInbound()) {
+    cards.push('<div class="card"><div class="label">今日入站</div><div class="val rx">' + gb(sum.today_rx) + "</div></div>");
+    cards.push('<div class="card"><div class="label">本月入站</div><div class="val rx">' + gb(sum.month_rx) + "</div></div>");
+  }
+  cards.push('<div class="card"><div class="label">机器数</div><div class="val">' + machines.length + "</div></div>");
+  cards.push('<div class="card"><div class="label">在线（2h）</div><div class="val">' + on + "</div></div>");
+  cards.push('<div class="card"><div class="label">今日出站</div><div class="val tx">' + gb(sum.today_tx) + "</div></div>");
+  cards.push('<div class="card"><div class="label">本月出站</div><div class="val tx">' + gb(sum.month_tx) + "</div></div>");
+  document.getElementById("summary").innerHTML = cards.join("");
   // 汇总刷新后同步横向排行
   try { renderRankChart(); } catch {}
 }
@@ -4059,15 +4198,37 @@ function renderTable() {
 
     const uptime = (m.online_sec_live != null) ? m.online_sec_live : (Number(m.online_sec) || 0);
     const gname = String(m.group_name || "").trim();
+    const hostFull = m.hostname || "";
+    const ifaceFull = m.interface || "";
+    const todayCell = showInbound()
+      ? (gb(m.today && m.today.rx) + " / " + gb(m.today && m.today.tx))
+      : gb(m.today && m.today.tx);
+    const monthCell = showInbound()
+      ? (gb(m.month && m.month.rx) + " / " + gb(m.month && m.month.tx))
+      : gb(m.month && m.month.tx);
     const texts = [
       m.machine_id || "",
       gname || "未分组",
-      m.hostname || "",
-      m.interface || "",
-      gb(m.today && m.today.rx) + " / " + gb(m.today && m.today.tx),
-      gb(m.month && m.month.rx) + " / " + gb(m.month && m.month.tx),
+      clipText(hostFull, 20),
+      clipText(ifaceFull, 20),
+      todayCell,
+      monthCell,
       fmtDuration(uptime),
       fmtTime(m.ts),
+    ];
+    const fullTitles = [
+      m.machine_id || "",
+      gname || "未分组",
+      hostFull,
+      ifaceFull,
+      showInbound()
+        ? ("入 " + gb(m.today && m.today.rx) + " / 出 " + gb(m.today && m.today.tx))
+        : ("出站 " + gb(m.today && m.today.tx)),
+      showInbound()
+        ? ("入 " + gb(m.month && m.month.rx) + " / 出 " + gb(m.month && m.month.tx))
+        : ("出站 " + gb(m.month && m.month.tx)),
+      texts[6],
+      texts[7],
     ];
     for (let ti = 0; ti < texts.length; ti++) {
       const td = document.createElement("td");
@@ -4075,11 +4236,15 @@ function renderTable() {
         const tag = document.createElement("span");
         tag.className = "group-tag" + (gname ? "" : " empty");
         tag.textContent = texts[ti];
-        tag.title = texts[ti];
+        tag.title = fullTitles[ti];
         td.appendChild(tag);
+      } else if (ti === 2 || ti === 3) {
+        td.className = "clip-cell";
+        td.textContent = texts[ti];
+        td.title = fullTitles[ti] || texts[ti];
       } else {
         td.textContent = texts[ti];
-        td.title = texts[ti];
+        td.title = fullTitles[ti] || texts[ti];
       }
       tr.appendChild(td);
     }
@@ -4122,6 +4287,42 @@ function renderCardList() {
     updateBatchBar();
     return;
   }
+  // 相对宽度基准：当前筛选列表中的最大入/出，便于卡片间横向条可比
+  let maxToday = 1, maxMonth = 1;
+  for (const m0 of view) {
+    const tr = Number(m0.today && m0.today.rx) || 0;
+    const tt = Number(m0.today && m0.today.tx) || 0;
+    const mr = Number(m0.month && m0.month.rx) || 0;
+    const mt = Number(m0.month && m0.month.tx) || 0;
+    maxToday = Math.max(maxToday, tr, tt);
+    maxMonth = Math.max(maxMonth, mr, mt);
+  }
+  const pct = (v, max) => {
+    const n = Number(v) || 0;
+    if (!(max > 0) || !(n > 0)) return 0;
+    return Math.max(2, Math.min(100, Math.round((n / max) * 100)));
+  };
+  const addBar = (wrap, label, value, max, cls) => {
+    const row = document.createElement("div");
+    row.className = "m-bar-row";
+    const lab = document.createElement("div");
+    lab.className = "m-bar-lab";
+    lab.textContent = label;
+    const track = document.createElement("div");
+    track.className = "m-bar-track";
+    const fill = document.createElement("div");
+    fill.className = "m-bar-fill " + cls;
+    fill.style.width = pct(value, max) + "%";
+    track.appendChild(fill);
+    const num = document.createElement("div");
+    num.className = "m-bar-num " + cls;
+    num.textContent = gb(value);
+    row.appendChild(lab);
+    row.appendChild(track);
+    row.appendChild(num);
+    wrap.appendChild(row);
+  };
+
   const frag = document.createDocumentFragment();
   for (const m of view) {
     const card = document.createElement("div");
@@ -4155,19 +4356,24 @@ function renderCardList() {
     tag.textContent = gname || "未分组";
     meta.appendChild(tag);
     const host = document.createElement("span");
-    host.textContent = (m.hostname || "-") + " · " + (m.interface || "-");
+    const hostFull = m.hostname || "-";
+    const ifaceFull = m.interface || "-";
+    host.className = "clip-meta";
+    host.textContent = clipText(hostFull, 20) + " · " + clipText(ifaceFull, 20);
+    host.title = hostFull + " · " + ifaceFull;
     meta.appendChild(host);
     card.appendChild(meta);
 
     const uptime = (m.online_sec_live != null) ? m.online_sec_live : (Number(m.online_sec) || 0);
     const stats = document.createElement("div");
     stats.className = "m-card-stats";
-    const cells = [
-      ["今日入站", gb(m.today && m.today.rx), "rx"],
-      ["今日出站", gb(m.today && m.today.tx), "tx"],
-      ["本月入站", gb(m.month && m.month.rx), "rx"],
-      ["本月出站", gb(m.month && m.month.tx), "tx"],
-    ];
+    const cells = [];
+    if (showInbound()) {
+      cells.push(["今日入站", gb(m.today && m.today.rx), "rx"]);
+      cells.push(["本月入站", gb(m.month && m.month.rx), "rx"]);
+    }
+    cells.push(["今日出站", gb(m.today && m.today.tx), "tx"]);
+    cells.push(["本月出站", gb(m.month && m.month.tx), "tx"]);
     for (const [k, v, cls] of cells) {
       const st = document.createElement("div");
       st.className = "st";
@@ -4178,10 +4384,35 @@ function renderCardList() {
     }
     card.appendChild(stats);
 
-    const foot = document.createElement("div");
-    foot.className = "m-card-meta";
-    foot.textContent = "在线 " + fmtDuration(uptime) + " · " + fmtTime(m.ts);
-    card.appendChild(foot);
+    // 卡片内横向流量条（每台独立；宽度相对当前列表最大值）
+    const bars = document.createElement("div");
+    bars.className = "m-card-bars";
+    const tHead = document.createElement("div");
+    tHead.className = "m-bar-sec";
+    tHead.textContent = "今日";
+    bars.appendChild(tHead);
+    if (showInbound()) addBar(bars, "入", m.today && m.today.rx, maxToday, "rx");
+    addBar(bars, "出", m.today && m.today.tx, maxToday, "tx");
+    const mHead = document.createElement("div");
+    mHead.className = "m-bar-sec";
+    mHead.textContent = "本月";
+    bars.appendChild(mHead);
+    if (showInbound()) addBar(bars, "入", m.month && m.month.rx, maxMonth, "rx");
+    addBar(bars, "出", m.month && m.month.tx, maxMonth, "tx");
+    card.appendChild(bars);
+
+    const upLine = document.createElement("div");
+    upLine.className = "m-card-meta";
+    upLine.textContent = "累积在线 " + fmtDuration(uptime);
+    card.appendChild(upLine);
+
+    // 最后上报时间单独一行，避免被截断/挤掉
+    const timeLine = document.createElement("div");
+    timeLine.className = "m-card-time";
+    const tstr = fmtTime(m.ts);
+    timeLine.textContent = "最后上报 " + tstr;
+    timeLine.title = tstr;
+    card.appendChild(timeLine);
 
     const ops = makeOpsButtons(m);
     ops.className = "m-card-ops";
@@ -4200,40 +4431,146 @@ function renderCardList() {
 }
 
 async function createGroupPrompt() {
-  const name = prompt("新建分组名称（1-40 字）：", "");
-  if (name == null) return;
-  const g = String(name).trim().slice(0, 40);
-  if (!g) { toast("分组名不能为空"); return; }
-  try {
-    const data = await api("/api/groups", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: g }),
-    });
-    if (!data || !data.ok) { toast((data && data.error) || "创建失败"); return; }
-    groupNames = data.groups || groupNames;
-    fillGroupFilterOptions();
-    toast("已创建分组：" + g);
-  } catch (e) {
-    toast("创建失败：" + (e && e.message ? e.message : e));
-  }
+  openGroupModal({ mode: "create", ids: [] });
 }
 
 async function setOneMachineGroup(mid) {
   const cur = (machines.find((m) => m.machine_id === mid) || {}).group_name || "";
-  const hint = groupNames.length ? ("可选：" + groupNames.join(" / ")) : "输入新分组名，留空=移出分组";
-  const name = prompt("设置分组（" + hint + "）", cur);
-  if (name == null) return;
-  await applyGroupToMachines([mid], String(name).trim());
+  openGroupModal({ mode: "one", ids: [mid], current: cur });
 }
 
 async function batchSetGroup() {
   const ids = [...selectedMids];
   if (!ids.length) { toast("未选择机器"); return; }
-  const hint = groupNames.length ? ("可选：" + groupNames.join(" / ")) : "输入分组名，留空=移出分组";
-  const name = prompt("将 " + ids.length + " 台移入分组（" + hint + "）", "");
-  if (name == null) return;
-  await applyGroupToMachines(ids, String(name).trim());
+  openGroupModal({ mode: "batch", ids });
+}
+
+/** 分组弹窗状态 */
+let _groupModal = { mode: "one", ids: [] };
+
+function openGroupModal(opts) {
+  _groupModal = {
+    mode: (opts && opts.mode) || "one",
+    ids: (opts && opts.ids) || [],
+    current: (opts && opts.current) || "",
+  };
+  const title = document.getElementById("groupModalTitle");
+  const desc = document.getElementById("groupModalDesc");
+  const sel = document.getElementById("grpSelect");
+  const custom = document.getElementById("grpCustom");
+  if (!sel || !custom) return;
+
+  // 填充下拉：未分组 + 已有分组 + 自定义
+  sel.replaceChildren();
+  const addOpt = (v, t) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = t;
+    sel.appendChild(o);
+  };
+  addOpt("__none__", "未分组（移出分组）");
+  for (const g of groupNames) addOpt(g, g);
+  addOpt("__custom__", "自定义…（用手写框）");
+
+  const cur = String(_groupModal.current || "").trim();
+  if (_groupModal.mode === "create") {
+    if (title) title.textContent = "新建分组";
+    if (desc) desc.textContent = "手写新分组名称，创建后可在筛选与移动中使用";
+    sel.value = "__custom__";
+    custom.value = "";
+    custom.placeholder = "输入新分组名";
+  } else if (_groupModal.mode === "batch") {
+    if (title) title.textContent = "批量移动分组";
+    if (desc) desc.textContent = "将选中的 " + _groupModal.ids.length + " 台机器移入分组";
+    sel.value = "__none__";
+    custom.value = "";
+  } else {
+    if (title) title.textContent = "移动分组";
+    if (desc) desc.textContent = "机器：" + (_groupModal.ids[0] || "");
+    if (cur && [...sel.options].some((o) => o.value === cur)) {
+      sel.value = cur;
+      custom.value = "";
+    } else if (cur) {
+      sel.value = "__custom__";
+      custom.value = cur;
+    } else {
+      sel.value = "__none__";
+      custom.value = "";
+    }
+  }
+  onGroupSelectChange();
+  document.getElementById("groupModal").classList.add("open");
+  setTimeout(() => {
+    if (sel.value === "__custom__") custom.focus();
+    else sel.focus();
+  }, 0);
+}
+
+function onGroupSelectChange() {
+  const sel = document.getElementById("grpSelect");
+  const custom = document.getElementById("grpCustom");
+  if (!sel || !custom) return;
+  if (sel.value === "__custom__") {
+    custom.placeholder = "输入自定义分组名";
+    if (!custom.value) custom.focus();
+  } else if (sel.value === "__none__") {
+    custom.placeholder = "也可在此手写新分组名（优先）";
+  } else {
+    // 选中已有分组时，清空手写以免误用旧字
+    custom.placeholder = "或手写新名称覆盖选择";
+  }
+}
+
+function closeGroupModal() {
+  const el = document.getElementById("groupModal");
+  if (el) el.classList.remove("open");
+  _groupModal = { mode: "one", ids: [] };
+}
+
+function resolveGroupModalName() {
+  const sel = document.getElementById("grpSelect");
+  const custom = document.getElementById("grpCustom");
+  const typed = custom ? String(custom.value || "").trim().slice(0, 40) : "";
+  // 手写优先
+  if (typed) return typed;
+  if (!sel) return "";
+  if (sel.value === "__none__" || sel.value === "__custom__") return "";
+  return String(sel.value || "").trim().slice(0, 40);
+}
+
+async function confirmGroupModal() {
+  const mode = _groupModal.mode || "one";
+  const name = resolveGroupModalName();
+
+  if (mode === "create") {
+    if (!name) { toast("请手写或选择有效分组名"); return; }
+    try {
+      const data = await api("/api/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!data || !data.ok) { toast((data && data.error) || "创建失败"); return; }
+      groupNames = data.groups || groupNames;
+      fillGroupFilterOptions();
+      closeGroupModal();
+      toast("已创建分组：" + name);
+    } catch (e) {
+      toast("创建失败：" + (e && e.message ? e.message : e));
+    }
+    return;
+  }
+
+  // 单机 / 批量：允许空名称 = 移出分组
+  const ids = _groupModal.ids || [];
+  if (!ids.length) { toast("未选择机器"); return; }
+  // 选了「自定义」但没手写
+  const sel = document.getElementById("grpSelect");
+  if (sel && sel.value === "__custom__" && !name) {
+    toast("请手写自定义分组名，或改选已有分组");
+    return;
+  }
+  closeGroupModal();
+  await applyGroupToMachines(ids, name);
 }
 
 async function applyGroupToMachines(ids, groupName) {
@@ -4763,7 +5100,7 @@ function renderMainChart() {
   if (!ctx) return;
   if (typeof Chart === "undefined") return; // Chart.js 尚未就绪
   if (chart) chart.destroy();
-  const showRx = document.getElementById("chkRx").checked;
+  const showRx = showInbound() && document.getElementById("chkRx").checked;
   const showTx = document.getElementById("chkTx").checked;
   saveChartPrefs();
   const p = chartPreset(chartMode);
@@ -4781,7 +5118,7 @@ function renderHistChart() {
   if (!ctx) return;
   if (typeof Chart === "undefined") return;
   if (histChart) histChart.destroy();
-  const showRx = document.getElementById("histChkRx").checked;
+  const showRx = showInbound() && document.getElementById("histChkRx").checked;
   const showTx = document.getElementById("histChkTx").checked;
   const p = chartPreset(histMode);
   const span = readSpan("histRange", histMode);
@@ -4791,6 +5128,38 @@ function renderHistChart() {
   } else {
     histChart = buildStackedChart(ctx, histPoints, { showRx, showTx, title });
   }
+}
+
+/** 全局：是否在页面显示入站（TG 汇报不受影响，始终含入出站） */
+function showInbound() {
+  try { return localStorage.getItem("dash_show_rx") !== "0"; } catch { return true; }
+}
+function setShowInbound(on) {
+  try { localStorage.setItem("dash_show_rx", on ? "1" : "0"); } catch {}
+  const chk = document.getElementById("chkShowRx");
+  if (chk) chk.checked = !!on;
+  try {
+    const rx = document.getElementById("chkRx");
+    const hrx = document.getElementById("histChkRx");
+    if (rx) { rx.checked = !!on; rx.disabled = !on; }
+    if (hrx) { hrx.checked = !!on; hrx.disabled = !on; }
+  } catch {}
+  try { renderSummary(); } catch {}
+  try { renderMachineList(); } catch {}
+  try { if (isChartPanelVisible()) renderMainChart(); } catch {}
+  try { if (isRankPanelVisible()) renderRankChart(); } catch {}
+  try { if (histMid) renderHistChart(); } catch {}
+}
+function restoreShowInbound() {
+  const on = showInbound();
+  const chk = document.getElementById("chkShowRx");
+  if (chk) chk.checked = on;
+  try {
+    const rx = document.getElementById("chkRx");
+    const hrx = document.getElementById("histChkRx");
+    if (rx) { rx.checked = on; rx.disabled = !on; }
+    if (hrx) { hrx.checked = on; hrx.disabled = !on; }
+  } catch {}
 }
 
 function isChartPanelVisible() {
@@ -4809,6 +5178,7 @@ function setChartPanelVisible(show, opts) {
     panel.style.display = on ? "" : "none";
   }
   if (chk) chk.checked = on;
+  updateDashGridLayout();
   if (!on) {
     try { if (chart) { chart.destroy(); chart = null; } } catch {}
     return;
@@ -4831,6 +5201,9 @@ function restoreChartPanelVisible() {
     panel.style.display = on ? "" : "none";
   }
   if (chk) chk.checked = on;
+  // 排行开关也一并恢复并排布
+  restoreRankPanelVisible();
+  updateDashGridLayout();
 }
 
 async function loadHistory() {
@@ -4972,6 +5345,9 @@ async function refresh(opts = {}) {
         await whenChartReady();
         renderMainChart();
         saveChartPrefs();
+      }
+      if (opts && opts.notify) {
+        toast("刷新成功 · " + machines.length + " 台机器");
       }
     } catch (e) {
       toast("刷新失败：" + (e && e.message ? e.message : String(e)));
@@ -6007,6 +6383,12 @@ document.getElementById("histModal").addEventListener("click", e => {
 document.getElementById("forceResultModal").addEventListener("click", e => {
   if (e.target === e.currentTarget) closeForceResult();
 });
+document.getElementById("groupModal").addEventListener("click", e => {
+  if (e.target === e.currentTarget) closeGroupModal();
+});
+document.getElementById("grpCustom").addEventListener("keydown", e => {
+  if (e.key === "Enter") confirmGroupModal();
+});
 document.getElementById("vpsMid").addEventListener("keydown", e => {
   if (e.key === "Enter") genCmd();
 });
@@ -6014,6 +6396,7 @@ document.getElementById("vpsMid").addEventListener("keydown", e => {
 renderThemeUI();
 loadChartPrefs();
 restoreFilterSortPrefs();
+restoreShowInbound();
 restoreChartPanelVisible();
 // 恢复勾选
 try {

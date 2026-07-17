@@ -1577,17 +1577,17 @@ async function forceReportPushAll(env) {
 // ─── TG 汇总模板 ───
 
 const BUILTIN_TEMPLATES = [
-  { id:"card", name:"📊 卡片日报", builtin:true,
-    body: "📊 流量日报\n━━━━━━━━━━━━\n🕐 时间：{time}\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\n\n📥 今日入站  {today_rx}\n📤 今日出站  {today_tx}\n📦 今日合计  {today_total}\n\n📥 本月入站  {month_rx}\n📤 本月出站  {month_tx}\n📦 本月合计  {month_total}\n━━━━━━━━━━━━\n{machine_lines}",
-    machine_line: "{status} {m_id}\n    📥 {today_rx}  ·  📤 {today_tx}",
+  { id:"card", name:"卡片日报", builtin:true,
+    body: "流量日报\n────────\n时间  {time}\n主机  {host_count} 台 · 在线 {online_count}\n\n今日\n  入站  {today_rx}\n  出站  {today_tx}\n\n本月\n  入站  {month_rx}\n  出站  {month_tx}\n────────\n{machine_lines}",
+    machine_line: "{status} {m_id}\n    入站 {today_rx}\n    出站 {today_tx}",
   },
-  { id:"detail", name:"🏆 今日排行", builtin:true,
-    body: "🏆 今日排行\n🕐 时间：{time}\n🟢 在线：{online_count}/{host_count} 台\n📦 今日合计：{today_total}\n━━━━━━━━━━━━\n{machine_lines}\n━━━━━━━━━━━━\n📅 本月累计：{month_total}",
-    machine_line: "{status} {m_id}\n    📥 {today_rx}  ·  📤 {today_tx}",
+  { id:"detail", name:"今日排行", builtin:true,
+    body: "今日排行\n时间  {time}\n在线  {online_count}/{host_count}\n────────\n{machine_lines}\n────────\n本月入站  {month_rx}\n本月出站  {month_tx}",
+    machine_line: "{status} {m_id}\n    入站 {today_rx}\n    出站 {today_tx}",
   },
-  { id:"brief", name:"📋 详细日报", builtin:true,
-    body: "📋 详细日报\n🕐 时间：{time}\n🖥 主机：{host_count} 台（🟢 {online_count} 在线）\n\n📦 今日  📥 {today_rx}  ·  📤 {today_tx}  ·  共 {today_total}\n📦 本月  📥 {month_rx}  ·  📤 {month_tx}  ·  共 {month_total}\n━━━━━━━━━━━━\n{machine_lines}",
-    machine_line: "{status} {m_id} · {hostname}\n    📅 今日  📥 {today_rx}  ·  📤 {today_tx}\n    📅 本月  📥 {month_rx}  ·  📤 {month_tx}",
+  { id:"brief", name:"详细日报", builtin:true,
+    body: "详细日报\n时间  {time}\n主机  {host_count} 台 · 在线 {online_count}\n\n今日  入站 {today_rx}  出站 {today_tx}\n本月  入站 {month_rx}  出站 {month_tx}\n────────\n{machine_lines}",
+    machine_line: "{status} {m_id} · {hostname}\n    今日 入站 {today_rx}  出站 {today_tx}\n    本月 入站 {month_rx}  出站 {month_tx}",
   },
 ];
 
@@ -2327,20 +2327,31 @@ td.ops button{margin-right:4px}
 .settings-form input:focus,.settings-form select:focus,.settings-form textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
 .settings-form .hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55}
 .settings-form .save-row{display:flex;gap:8px;align-items:center;margin-top:16px;flex-wrap:wrap}
-.settings-page{display:flex;flex-direction:column;gap:14px}
-.settings-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:2px}
-.settings-head h2{margin:0;font-size:16px;color:var(--text)}
-.settings-head .sub{margin:6px 0 0;font-size:12px;color:var(--muted);line-height:1.5;max-width:720px}
-.settings-grid{display:grid;grid-template-columns:1.1fr 0.9fr;gap:14px;align-items:start}
-@media (max-width:900px){.settings-grid{grid-template-columns:1fr}}
-.settings-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;margin:0;box-shadow:0 0 28px var(--glow)}
-.settings-card .card-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px}
-.settings-card .card-title h3{margin:0;font-size:14px;color:var(--text);font-weight:600}
-.settings-card .card-title .tag{font-size:11px;color:var(--badge-fg);background:var(--badge-bg);border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap}
+/* 设置页：单一完整面板 */
+.settings-page{max-width:980px;margin:0 auto}
+.settings-shell{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 8px 28px var(--glow)}
+.settings-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:18px 20px;border-bottom:1px solid var(--line2);background:var(--bg2)}
+.settings-head h2{margin:0;font-size:18px;color:var(--text)}
+.settings-head .sub{margin:6px 0 0;font-size:12px;color:var(--muted);line-height:1.55;max-width:720px}
+.settings-body{padding:0}
+.settings-section{padding:18px 20px;border-bottom:1px solid var(--line2)}
+.settings-section:last-child{border-bottom:0}
+.settings-section .sec-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px}
+.settings-section .sec-title h3{margin:0;font-size:14px;color:var(--text);font-weight:600}
+.settings-section .sec-title .tag{font-size:11px;color:var(--badge-fg);background:var(--badge-bg);border:1px solid var(--border);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.settings-section .sec-desc{font-size:12px;color:var(--muted);line-height:1.55;margin:0 0 14px}
+.settings-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+@media (max-width:720px){.settings-grid-2{grid-template-columns:1fr}}
+.settings-footer{padding:14px 20px;border-top:1px solid var(--line2);background:var(--bg2);display:flex;gap:8px;align-items:center;flex-wrap:wrap;position:sticky;bottom:0;z-index:4}
 .field{margin-bottom:12px}
 .field:last-child{margin-bottom:0}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:640px){.field-row{grid-template-columns:1fr}}
+/* 兼容旧类名，避免主题覆盖失效 */
+.settings-card{background:transparent;border:0;border-radius:0;padding:0;margin:0;box-shadow:none}
+.settings-card .card-title{display:none}
+.settings-grid{display:block}
+
 .inline-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .inline-controls select{width:auto;min-width:120px}
 /* 发送时刻下拉：强制可读，避免主题把 option 做成白字 */
@@ -2503,8 +2514,8 @@ textarea:focus{border-color:var(--accent)}
       <button class="primary" onclick="openAddVps()">＋ 添加 VPS</button>
       <button onclick="refresh()">刷新</button>
       <button class="green" onclick="forceFetchAll()" id="btnForceFetch" title="签名推送到各 VPS 回调口立即上报（需公网；无 poll）">获取流量</button>
-      <label class="chk"><input type="checkbox" id="filterOnline" onchange="renderTable()"> 只看在线</label>
-      <select id="sortBy" onchange="renderTable()" title="排序">
+      <label class="chk"><input type="checkbox" id="filterOnline" onchange="onFilterSortChange()"> 只看在线</label>
+      <select id="sortBy" onchange="onFilterSortChange()" title="排序（会记住选择）">
         <option value="last">默认（最后上报）</option>
         <option value="today_desc">今日流量 ↓</option>
         <option value="today_asc">今日流量 ↑</option>
@@ -2557,139 +2568,121 @@ textarea:focus{border-color:var(--accent)}
     </div>
   </div>
 
-  <!-- 设置页 -->
+  <!-- 设置页：单一完整页面 -->
   <div id="pageSettings" class="page">
     <div class="settings-page settings-form">
-      <div class="settings-head">
-        <div>
-          <h2>设置</h2>
-          <p class="sub">Telegram 凭证、定时汇总、VPS 默认上报周期与汇报模板。空字段自动回退环境变量 / 默认值。</p>
-        </div>
-        <button type="button" onclick="switchTab('dash')">← 返回看板</button>
-      </div>
-
-      <div class="settings-grid">
-        <div class="settings-card">
-          <div class="card-title">
-            <h3>Telegram 连接</h3>
-            <span class="tag">汇总发送</span>
+      <div class="settings-shell">
+        <div class="settings-head">
+          <div>
+            <h2>设置</h2>
+            <p class="sub">Telegram 凭证、定时汇总、VPS 默认上报、主题与汇报模板。空字段自动回退环境变量 / 默认值。</p>
           </div>
-          <p class="section-note">用于看板「TG 汇总 / 立即汇报 / 离线告警 / 登录通知」。页面留空则读取 Worker 加密变量 <code>TG_TOKEN</code> / <code>TG_ID</code>。</p>
-          <div class="field">
-            <label for="s_t_token">Bot Token</label>
-            <input id="s_t_token" type="password" placeholder="留空则用环境变量 TG_TOKEN / TG_BOT_TOKEN" autocomplete="off">
-            <div class="hint" id="hint_t_token">页面未填时使用环境变量</div>
-          </div>
-          <div class="field">
-            <label for="s_t_id">Chat ID</label>
-            <input id="s_t_id" type="text" placeholder="留空则用环境变量 TG_ID" autocomplete="off">
-            <div class="hint" id="hint_t_id">页面未填时使用环境变量 TG_ID</div>
-          </div>
+          <button type="button" onclick="switchTab('dash')">← 返回看板</button>
         </div>
 
-        <div class="settings-card">
-          <div class="card-title">
-            <h3>定时 TG 汇总</h3>
-            <span class="tag">上海时间</span>
-          </div>
-          <p class="section-note">Worker 每小时整点检查一次。到点自动发送当前选中模板，同一天只发一次。也可在模板区点「立即汇报」。</p>
-          <div class="field">
-            <label for="s_t_hour">每天发送时刻</label>
-            <div class="inline-controls">
-              <select id="s_t_hour" class="hour-select" onchange="onTgHourChange()" style="min-width:140px;width:140px"></select>
-              <span class="muted" style="font-size:12px">整点 · Asia/Shanghai</span>
+        <div class="settings-body">
+          <section class="settings-section">
+            <div class="sec-title">
+              <h3>1. Telegram 与定时汇总</h3>
+              <span class="tag">发送配置</span>
             </div>
-            <input id="s_t_time" type="hidden" value="20:00:00">
-            <div class="hint" id="hint_t_time">当前：上海时间 20:00 发送</div>
-          </div>
-        </div>
-
-        <div class="settings-card">
-          <div class="card-title">
-            <h3>VPS 上报默认</h3>
-            <span class="tag">安装命令</span>
-          </div>
-          <p class="section-note">写入「添加 / 更新 VPS」安装命令的默认 cron。只影响新生成命令；已装机器需更新注册后才会变。</p>
-          <div class="field">
-            <label for="s_cf_time">CF 上报 cron</label>
-            <input id="s_cf_time" type="text" placeholder="0 * * * *" autocomplete="off" spellcheck="false">
-            <div class="hint">默认 <code>0 * * * *</code>（每小时）。更密 → 日内图更细，但 CF/D1 调用更多；周/月/年统计通常每小时或更疏即可。</div>
-          </div>
-        </div>
-
-        <div class="settings-card">
-          <div class="card-title">
-            <h3>界面主题</h3>
-            <span class="tag">本地记忆</span>
-          </div>
-          <p class="section-note">默认主题为「原谅色」。另有极夜蓝、霓虹赛博、墨夜、琉璃、雾蓝白、绛夜。选择后立即生效，保存在本机浏览器。</p>
-          <div class="theme-grid" id="themeGrid"></div>
-        </div>
-
-        <div class="settings-card">
-          <div class="card-title">
-            <h3>保存</h3>
-            <span class="tag">全局配置</span>
-          </div>
-          <p class="section-note">保存 Token、Chat ID、定时小时与 VPS 默认 cron。模板内容请在右侧「汇报模板」里单独保存。</p>
-          <div class="save-row" style="margin-top:0">
-            <button class="primary" onclick="saveConfig()">保存设置</button>
-            <button type="button" onclick="switchTab('dash')">返回看板</button>
-            <span id="saveStatus" class="muted"></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="settings-card">
-        <div class="card-title">
-          <h3>TG 汇报模板</h3>
-          <div class="inline-controls">
-            <button type="button" class="green" onclick="sendTgSummary()" id="btnTgNow" title="立即发送一次 TG 汇总">立即汇报</button>
-          </div>
-        </div>
-        <p class="section-note">选择当前汇报模板，或编辑/新建。切换下拉会自动保存为当前 active；改完正文后请点「保存模板」。</p>
-
-        <div class="field-row" style="margin-bottom:12px">
-          <div class="field">
-            <label for="tplActive">当前模板</label>
-            <div class="inline-controls">
-              <select id="tplActive" onchange="onTplActiveChange()" style="min-width:180px;flex:1"></select>
-              <button type="button" onclick="tplNew()">新建</button>
-              <button type="button" onclick="tplDelete()" class="danger">删除</button>
-              <button type="button" onclick="tplReset()">恢复内置</button>
+            <p class="sec-desc">用于看板 TG 汇总、离线告警、登录通知。页面留空则读取 Worker 加密变量 TG_TOKEN / TG_ID。Worker 每小时整点检查，到点发送当前模板，同一天只发一次。</p>
+            <div class="settings-grid-2">
+              <div class="field">
+                <label for="s_t_token">Bot Token</label>
+                <input id="s_t_token" type="password" placeholder="留空则用环境变量 TG_TOKEN / TG_BOT_TOKEN" autocomplete="off">
+                <div class="hint" id="hint_t_token">页面未填时使用环境变量</div>
+              </div>
+              <div class="field">
+                <label for="s_t_id">Chat ID</label>
+                <input id="s_t_id" type="text" placeholder="留空则用环境变量 TG_ID" autocomplete="off">
+                <div class="hint" id="hint_t_id">页面未填时使用环境变量 TG_ID</div>
+              </div>
+              <div class="field">
+                <label for="s_t_hour">每天发送时刻</label>
+                <div class="inline-controls">
+                  <select id="s_t_hour" class="hour-select" onchange="onTgHourChange()" style="min-width:140px;width:140px"></select>
+                  <span class="muted" style="font-size:12px">整点 · Asia/Shanghai</span>
+                </div>
+                <input id="s_t_time" type="hidden" value="20:00:00">
+                <div class="hint" id="hint_t_time">当前：上海时间 20:00 发送</div>
+              </div>
+              <div class="field">
+                <label for="s_cf_time">VPS 上报 cron（安装命令默认）</label>
+                <input id="s_cf_time" type="text" placeholder="0 * * * *" autocomplete="off" spellcheck="false">
+                <div class="hint">默认 <code>0 * * * *</code>（每小时）。只影响新生成命令；已装机器需更新注册后才会变。</div>
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <label for="tplName">模板名称</label>
-            <input id="tplName" type="text" placeholder="如：我的日报" autocomplete="off">
-          </div>
+          </section>
+
+          <section class="settings-section">
+            <div class="sec-title">
+              <h3>2. 界面主题</h3>
+              <span class="tag">本地记忆</span>
+            </div>
+            <p class="sec-desc">默认主题为「原谅色」。另有极夜蓝、霓虹赛博、墨夜、琉璃、雾蓝白、绛夜。选择后立即生效，保存在本机浏览器。</p>
+            <div class="theme-grid" id="themeGrid"></div>
+          </section>
+
+          <section class="settings-section">
+            <div class="sec-title">
+              <h3>3. TG 汇报模板</h3>
+              <div class="inline-controls">
+                <button type="button" class="green" onclick="sendTgSummary()" id="btnTgNow" title="立即发送一次 TG 汇总">立即汇报</button>
+              </div>
+            </div>
+            <p class="sec-desc">选择当前汇报模板，或编辑/新建。切换下拉会自动保存为当前 active；改完正文后请点「保存模板」。</p>
+
+            <div class="field-row" style="margin-bottom:12px">
+              <div class="field">
+                <label for="tplActive">当前模板</label>
+                <div class="inline-controls">
+                  <select id="tplActive" onchange="onTplActiveChange()" style="min-width:180px;flex:1"></select>
+                  <button type="button" onclick="tplNew()">新建</button>
+                  <button type="button" onclick="tplDelete()" class="danger">删除</button>
+                  <button type="button" onclick="tplReset()">恢复内置</button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="tplName">模板名称</label>
+                <input id="tplName" type="text" placeholder="如：我的日报" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="tpl-col">
+              <div class="field">
+                <label for="tplBody">正文（可用 {machine_lines} 插入各机列表）</label>
+                <textarea id="tplBody" rows="11" placeholder="流量汇总..."></textarea>
+              </div>
+              <div class="field">
+                <label for="tplLine">每机行模板</label>
+                <textarea id="tplLine" rows="11" placeholder="{status} {m_id} 入{today_rx}/出{today_tx}"></textarea>
+              </div>
+            </div>
+
+            <div class="tpl-help">
+              正文占位符：<code>{time}</code> <code>{host_count}</code> <code>{online_count}</code> <code>{today_rx}</code> <code>{today_tx}</code> <code>{month_rx}</code> <code>{month_tx}</code> <code>{machine_lines}</code><br>
+              每机行还可：<code>{status}</code> <code>{m_id}</code> <code>{hostname}</code> <code>{iface}</code> 及该机 today/month 入出站。
+            </div>
+
+            <div class="save-row" style="margin-top:12px">
+              <button class="primary" onclick="tplSave()">保存模板</button>
+              <button type="button" onclick="tplPreview()">预览</button>
+              <span id="tplStatus" class="muted"></span>
+            </div>
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;color:var(--label);font-size:12px">预览结果</summary>
+              <pre class="tpl-preview" id="tplPreview" style="margin-top:8px">（点「预览」用当前数据渲染）</pre>
+            </details>
+          </section>
         </div>
 
-        <div class="tpl-col">
-          <div class="field">
-            <label for="tplBody">正文（可用 {machine_lines} 插入各机列表）</label>
-            <textarea id="tplBody" rows="11" placeholder="📊 流量汇总..."></textarea>
-          </div>
-          <div class="field">
-            <label for="tplLine">每机行模板</label>
-            <textarea id="tplLine" rows="11" placeholder="{status} {m_id} 入{today_rx}/出{today_tx}"></textarea>
-          </div>
+        <div class="settings-footer">
+          <button class="primary" onclick="saveConfig()">保存设置</button>
+          <button type="button" onclick="switchTab('dash')">返回看板</button>
+          <span id="saveStatus" class="muted"></span>
+          <span class="muted" style="font-size:12px;margin-left:auto">模板请用上方「保存模板」单独保存</span>
         </div>
-
-        <div class="tpl-help">
-          正文占位符：<code>{time}</code> <code>{host_count}</code> <code>{online_count}</code> <code>{today_rx}</code> <code>{today_tx}</code> <code>{today_total}</code> <code>{month_rx}</code> <code>{month_tx}</code> <code>{month_total}</code> <code>{machine_lines}</code><br>
-          每机行还可：<code>{status}</code> <code>{m_id}</code> <code>{hostname}</code> <code>{iface}</code> 及该机 today/month。
-        </div>
-
-        <div class="save-row sticky-actions">
-          <button class="primary" onclick="tplSave()">保存模板</button>
-          <button type="button" onclick="tplPreview()">预览</button>
-          <span id="tplStatus" class="muted"></span>
-        </div>
-        <details style="margin-top:10px">
-          <summary style="cursor:pointer;color:#9fb3d9;font-size:12px">预览结果</summary>
-          <pre class="tpl-preview" id="tplPreview" style="margin-top:8px">（点「预览」用当前数据渲染）</pre>
-        </details>
       </div>
     </div>
   </div>
@@ -2882,17 +2875,24 @@ function chartHasData(d) {
 }
 function asChartData(data) {
   if (!data) return { points: [], machines: [], series: {} };
-  // 新格式
-  if (data.series || data.machines) {
+  // 数组：直接当 points
+  if (Array.isArray(data)) return { points: data, machines: [], series: {} };
+  // 新格式：series 必须是对象，且通常带 machines
+  if (data.series && typeof data.series === "object" && !Array.isArray(data.series)) {
     return {
-      points: data.points || [],
-      machines: data.machines || [],
+      points: Array.isArray(data.points) ? data.points : [],
+      machines: Array.isArray(data.machines) ? data.machines : [],
       series: data.series || {},
     };
   }
-  // 旧格式：只有 points
-  if (Array.isArray(data.points)) return { points: data.points, machines: [], series: {} };
-  if (Array.isArray(data)) return { points: data, machines: [], series: {} };
+  // 小时折线等：{ points, mode, series: "cumulative_today" } —— series 是字符串，只取 points
+  if (Array.isArray(data.points)) {
+    return {
+      points: data.points,
+      machines: Array.isArray(data.machines) ? data.machines : [],
+      series: {},
+    };
+  }
   return { points: [], machines: [], series: {} };
 }
 
@@ -3031,6 +3031,27 @@ function renderSummary() {
   ].join("");
 }
 
+function onFilterSortChange() {
+  try {
+    const fo = document.getElementById("filterOnline");
+    const sel = document.getElementById("sortBy");
+    if (fo) localStorage.setItem("dash_filter_online", fo.checked ? "1" : "0");
+    if (sel && sel.value) localStorage.setItem("dash_sort_by", sel.value);
+  } catch { /* ignore */ }
+  renderTable();
+}
+function restoreFilterSortPrefs() {
+  try {
+    const fo = document.getElementById("filterOnline");
+    const sel = document.getElementById("sortBy");
+    if (fo) fo.checked = localStorage.getItem("dash_filter_online") === "1";
+    if (sel) {
+      const v = localStorage.getItem("dash_sort_by") || "last";
+      const ok = [...sel.options].some(o => o.value === v);
+      sel.value = ok ? v : "last";
+    }
+  } catch { /* ignore */ }
+}
 function machineView() {
   let arr = machines.slice();
   const fo = document.getElementById("filterOnline");
@@ -3357,20 +3378,23 @@ const valueLabelPlugin = {
 };
 
 /** 折线：日内当日累计（入/出分色；同日只升/持平） */
-function buildLineChart(canvas, points, opts) {
+function buildLineChart(canvas, chartData, opts) {
   const showRx = opts.showRx !== false;
   const showTx = opts.showTx !== false;
   const title = opts.title || "";
-  const labels = (points || []).map(p => {
+  // 兼容 asChartData 对象 与 旧 points 数组
+  const packed = asChartData(chartData);
+  const points = packed.points || [];
+  const labels = points.map(p => {
     // "2026-07-17 14:00" → "14:00"，跨天保留月-日
     const b = String(p.bucket || "");
     const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/.exec(b);
     if (!m) return b;
     return m[4];
   });
-  const fullLabels = (points || []).map(p => p.bucket);
-  const rx = (points || []).map(p => (Number(p.rx) || 0) / 1e9);
-  const tx = (points || []).map(p => (Number(p.tx) || 0) / 1e9);
+  const fullLabels = points.map(p => p.bucket);
+  const rx = points.map(p => (Number(p.rx) || 0) / 1e9);
+  const tx = points.map(p => (Number(p.tx) || 0) / 1e9);
   const datasets = [];
   const tc = themeChartColors();
   if (showRx) {
@@ -4216,13 +4240,11 @@ function tplDelete() {
 }
 async function tplReset() {
   if (!confirm("恢复为内置 3 个模板？自定义模板会丢失。")) return;
-  // 直接用接口返回的内置结构：body 中的 \\n 在本文件模板字符串里会变成浏览器源码的 \\n 字面量？
-  // 这里用 String.fromCharCode(10) 拼换行，避免转义层次混乱。
   const NL = String.fromCharCode(10);
   tplList = [
-    { id:"card", name:"📊 卡片日报", builtin:true, body:["📊 流量日报","━━━━━━━━━━━━","🕐 时间：{time}","🖥 主机：{host_count} 台（🟢 {online_count} 在线）","","📥 今日入站  {today_rx}","📤 今日出站  {today_tx}","📦 今日合计  {today_total}","","📥 本月入站  {month_rx}","📤 本月出站  {month_tx}","📦 本月合计  {month_total}","━━━━━━━━━━━━","{machine_lines}"].join(NL), machine_line:["{status} {m_id}","    📥 {today_rx}  ·  📤 {today_tx}"].join(NL) },
-    { id:"detail", name:"🏆 今日排行", builtin:true, body:["🏆 今日排行","🕐 时间：{time}","🟢 在线：{online_count}/{host_count} 台","📦 今日合计：{today_total}","━━━━━━━━━━━━","{machine_lines}","━━━━━━━━━━━━","📅 本月累计：{month_total}"].join(NL), machine_line:["{status} {m_id}","    📥 {today_rx}  ·  📤 {today_tx}"].join(NL) },
-    { id:"brief", name:"📋 详细日报", builtin:true, body:["📋 详细日报","🕐 时间：{time}","🖥 主机：{host_count} 台（🟢 {online_count} 在线）","","📦 今日  📥 {today_rx}  ·  📤 {today_tx}  ·  共 {today_total}","📦 本月  📥 {month_rx}  ·  📤 {month_tx}  ·  共 {month_total}","━━━━━━━━━━━━","{machine_lines}"].join(NL), machine_line:["{status} {m_id} · {hostname}","    📅 今日  📥 {today_rx}  ·  📤 {today_tx}","    📅 本月  📥 {month_rx}  ·  📤 {month_tx}"].join(NL) },
+    { id:"card", name:"卡片日报", builtin:true, body:["流量日报","────────","时间  {time}","主机  {host_count} 台 · 在线 {online_count}","","今日","  入站  {today_rx}","  出站  {today_tx}","","本月","  入站  {month_rx}","  出站  {month_tx}","────────","{machine_lines}"].join(NL), machine_line:["{status} {m_id}","    入站 {today_rx}","    出站 {today_tx}"].join(NL) },
+    { id:"detail", name:"今日排行", builtin:true, body:["今日排行","时间  {time}","在线  {online_count}/{host_count}","────────","{machine_lines}","────────","本月入站  {month_rx}","本月出站  {month_tx}"].join(NL), machine_line:["{status} {m_id}","    入站 {today_rx}","    出站 {today_tx}"].join(NL) },
+    { id:"brief", name:"详细日报", builtin:true, body:["详细日报","时间  {time}","主机  {host_count} 台 · 在线 {online_count}","","今日  入站 {today_rx}  出站 {today_tx}","本月  入站 {month_rx}  出站 {month_tx}","────────","{machine_lines}"].join(NL), machine_line:["{status} {m_id} · {hostname}","    今日 入站 {today_rx}  出站 {today_tx}","    本月 入站 {month_rx}  出站 {month_tx}"].join(NL) },
   ];
   tplActiveId = "card"; tplEditingId = "card";
   await saveTplAll("已恢复内置");
@@ -4761,6 +4783,7 @@ document.getElementById("vpsMid").addEventListener("keydown", e => {
 
 renderThemeUI();
 loadChartPrefs();
+restoreFilterSortPrefs();
 // 恢复勾选
 try {
   const rx = document.getElementById("chkRx");

@@ -1751,16 +1751,87 @@ async function addLoginLog(env, rec) {
   } catch { /* ignore */ }
 }
 
-async function getLoginLogs(env, limit = 100) {
-  if (!env.DB) return [];
-  const n = Math.min(500, Math.max(10, Number(limit) || 100));
+/**
+ * 登录日志分页：默认每页 20，返回 total + page + pageSize + logs
+ * 兼容旧调用 getLoginLogs(env, limit) —— 第二参为数字时当作 limit（无分页）
+ */
+async function getLoginLogs(env, opts = {}) {
+  if (!env.DB) {
+    if (typeof opts === "number") return [];
+    return { total: 0, page: 1, pageSize: 20, logs: [] };
+  }
+  // 兼容：getLoginLogs(env, 100)
+  if (typeof opts === "number") {
+    const n = Math.min(500, Math.max(1, Number(opts) || 100));
+    const { results } = await env.DB.prepare(
+      `SELECT id, ts, ip, ua, success, reason FROM login_logs ORDER BY id DESC LIMIT ?`
+    ).bind(n).all();
+    return (results || []).map(r => ({
+      id: r.id, ts: r.ts, ip: r.ip || "-", ua: r.ua || "-",
+      success: !!r.success, reason: r.reason || "",
+    }));
+  }
+  const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 20));
+  const page = Math.max(1, Number(opts.page) || 1);
+  let total = 0;
+  try {
+    const row = await env.DB.prepare(`SELECT COUNT(*) AS c FROM login_logs`).first();
+    total = Number(row && row.c) || 0;
+  } catch { total = 0; }
+  const pages = Math.max(1, Math.ceil(total / pageSize) || 1);
+  const safePage = Math.min(page, pages);
+  const offset = (safePage - 1) * pageSize;
   const { results } = await env.DB.prepare(
-    `SELECT id, ts, ip, ua, success, reason FROM login_logs ORDER BY id DESC LIMIT ?`
-  ).bind(n).all();
-  return (results || []).map(r => ({
+    `SELECT id, ts, ip, ua, success, reason FROM login_logs ORDER BY id DESC LIMIT ? OFFSET ?`
+  ).bind(pageSize, offset).all();
+  const logs = (results || []).map(r => ({
     id: r.id, ts: r.ts, ip: r.ip || "-", ua: r.ua || "-",
     success: !!r.success, reason: r.reason || "",
   }));
+  return { total, page: safePage, pageSize, pages, logs };
+}
+
+/**
+ * 删除最早的 n 条登录日志（按 id ASC）。
+ * n 会钳到 [0, total]：只有 5 条却删 100 → 实际删 5 条，清空。
+ */
+async function deleteOldestLoginLogs(env, n) {
+  if (!env.DB) return { ok: false, error: "DB 未绑定", deleted: 0, total_before: 0 };
+  let want = Math.floor(Number(n));
+  if (!Number.isFinite(want) || want <= 0) {
+    return { ok: false, error: "请输入正整数条数", deleted: 0, total_before: 0 };
+  }
+  // 防呆：单次最多删 10000
+  want = Math.min(10000, want);
+  let total = 0;
+  try {
+    const row = await env.DB.prepare(`SELECT COUNT(*) AS c FROM login_logs`).first();
+    total = Number(row && row.c) || 0;
+  } catch { total = 0; }
+  if (total <= 0) {
+    return { ok: true, deleted: 0, total_before: 0, total_after: 0, message: "当前无日志" };
+  }
+  const del = Math.min(want, total);
+  // SQLite / D1：删 id 最小的 del 条
+  await env.DB.prepare(
+    `DELETE FROM login_logs WHERE id IN (
+       SELECT id FROM login_logs ORDER BY id ASC LIMIT ?
+     )`
+  ).bind(del).run();
+  let after = 0;
+  try {
+    const row = await env.DB.prepare(`SELECT COUNT(*) AS c FROM login_logs`).first();
+    after = Number(row && row.c) || 0;
+  } catch { after = Math.max(0, total - del); }
+  return {
+    ok: true,
+    deleted: del,
+    total_before: total,
+    total_after: after,
+    message: del < want
+      ? `请求删除 ${want} 条，实际仅有 ${total} 条，已全部删除`
+      : `已删除最早 ${del} 条`,
+  };
 }
 
 /** 离线检测：离线且未通知 → 发 TG + 标记；重新在线 → 清标记。
@@ -1947,6 +2018,22 @@ button.primary:hover{background:var(--accent2);border-color:var(--accent2)}
 button.green{background:var(--ok);border-color:var(--ok);font-weight:600;color:#fff}
 button.green:hover{background:var(--ok2);border-color:var(--ok2)}
 button.warn{background:var(--warn);border-color:var(--warn);font-weight:600;color:#111}
+/* TG 汇总专用按钮：Telegram 蓝，各主题统一好认 */
+button.tg-btn{
+  background:linear-gradient(180deg,#3b9cf0 0%,#2a7fd4 100%);
+  border:1px solid #1d6fbf;
+  color:#fff;
+  font-weight:700;
+  letter-spacing:.2px;
+  box-shadow:0 2px 8px rgba(42,127,212,.28);
+}
+button.tg-btn:hover{
+  background:linear-gradient(180deg,#4aa8f5 0%,#3189e0 100%);
+  border-color:#1a63ad;
+  box-shadow:0 3px 12px rgba(42,127,212,.36);
+}
+button.tg-btn:active{transform:translateY(1px);box-shadow:0 1px 4px rgba(42,127,212,.25)}
+button.tg-btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;transform:none}
 main{padding:16px 20px 40px;max-width:1200px;margin:0 auto}
 .page{display:none}
 .page.active{display:block}
@@ -2145,6 +2232,11 @@ html[data-theme="prairie"] .status-pill.on{color:#2f5a3a;background:#dff0db;bord
 
 html[data-theme="prairie"] .status-pill.off{color:#8a3a3a;background:#f0d4d4;border-color:#d9a0a0}
 
+/* TG 按钮：原谅色 */
+html[data-theme="prairie"] button.tg-btn{
+  background:linear-gradient(180deg,#3f8fd9 0%,#2f6fb8 100%);border-color:#2a5f9e;color:#fff;
+}
+
 /* theme token: 极夜蓝（default）— 深蓝控制台，兼作 :root 回退 */
 :root, html[data-theme="default"]{
   color-scheme:dark;
@@ -2275,6 +2367,12 @@ html[data-theme="noir"] #s_t_hour option{
   color:#0b1220 !important;
   background:#fff !important;
 }
+
+/* TG 按钮：墨夜 */
+html[data-theme="noir"] button.tg-btn{
+  background:#2f6f8a;border-color:#3d8fb0;color:#e8f4fa;box-shadow:none;
+}
+html[data-theme="noir"] button.tg-btn:hover{background:#3d8fb0;border-color:#4fa3c4}
 
 /* theme token: 琉璃（glass）— 深空毛玻璃 */
 html[data-theme="glass"]{
@@ -2413,21 +2511,20 @@ html[data-theme="glass"] select:not(#themeSelect) option:hover{
   background:#bae6fd;
 }
 
-/* 主题切换下拉：不吃玻璃透明，固定深实心 */
+/* 主题切换下拉：跟随琉璃变量，不强制死黑 */
 html[data-theme="glass"] #themeSelect,
 html[data-theme="glass"] .theme-switch select{
-  color:#eaf6ff !important;
-  background:#0b1428 !important;
-  border:1px solid #3b82f6 !important;
+  color:var(--text) !important;
+  background:rgba(8,14,32,.82) !important;
+  border:1px solid rgba(125,211,252,.4) !important;
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
   box-shadow:none !important;
 }
-
 html[data-theme="glass"] #themeSelect option,
 html[data-theme="glass"] .theme-switch select option{
   color:#0b1220 !important;
-  background:#f8fafc !important;
+  background:#ffffff !important;
 }
 
 html[data-theme="glass"] .status-pill.on{color:#bbf7d0;background:rgba(34,197,94,.16);border-color:rgba(134,239,172,.28)}
@@ -2447,6 +2544,13 @@ html[data-theme="glass"] #s_t_hour option{
   color:#0b1220 !important;
   background:#f8fafc !important;
 }
+
+/* TG 按钮：琉璃 */
+html[data-theme="glass"] button.tg-btn{
+  background:rgba(56,189,248,.9);border:1px solid rgba(125,211,252,.65);color:#041018;
+  box-shadow:0 4px 14px rgba(56,189,248,.2);backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+html[data-theme="glass"] button.tg-btn:hover{background:rgba(125,211,252,.95)}
 
 /* theme token: 雾蓝白（paper）— 淡蓝浅色 */
 html[data-theme="paper"]{
@@ -2527,6 +2631,11 @@ html[data-theme="paper"] .status-pill.on{color:#166534;background:#dcfce7;border
 
 html[data-theme="paper"] .status-pill.off{color:#991b1b;background:#fee2e2;border-color:#fca5a5}
 
+/* TG 按钮：雾蓝白 */
+html[data-theme="paper"] button.tg-btn{
+  background:linear-gradient(180deg,#3b6fd4 0%,#2f5fbe 100%);border-color:#274f9e;color:#fff;
+}
+
 /* theme token: 绛夜（crimson）— 深酒红暗珊瑚 */
 html[data-theme="crimson"]{
   color-scheme:dark;
@@ -2581,27 +2690,18 @@ html[data-theme="crimson"] .status-pill.on{color:#86efac;background:rgba(63,174,
 
 html[data-theme="crimson"] .status-pill.off{color:#f0a8a8;background:rgba(224,107,107,.14);border-color:rgba(224,107,107,.3)}
 
+/* TG 按钮：绛夜 */
+html[data-theme="crimson"] button.tg-btn{
+  background:linear-gradient(180deg,#c45c6a 0%,#a84856 100%);border-color:#8f3a48;color:#fff;
+  box-shadow:0 2px 8px rgba(168,72,86,.3);
+}
+
 /* overrides for theme: cyber */
-
-html[data-theme="cyber"] .status-pill.on{color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(16,185,129,.35)}
-
-html[data-theme="cyber"] .status-pill.off{color:#fda4af;background:rgba(244,63,94,.12);border-color:rgba(244,63,94,.3)}
+html[data-theme="cyber"] button.tg-btn{
+  background:linear-gradient(180deg,#22d3ee 0%,#06b6d4 100%);border-color:#0891b2;color:#041018;
+}
 
 /* theme picker swatches */
-.theme-switch select{
-  color:#eaf6ff !important;
-  background:#0b1428 !important;
-  border:1px solid #3b82f6 !important;
-  backdrop-filter:none !important;
-  -webkit-backdrop-filter:none !important;
-  box-shadow:none !important;
-}
-html[data-theme="glass"] #themeSelect option,
-html[data-theme="glass"] .theme-switch select option{
-  color:#0b1220 !important;
-  background:#f8fafc !important;
-}
-
 /* 墨夜：哑光控件，无渐变高光 */
 html[data-theme="noir"] button.primary,
 html[data-theme="noir"] .seg button.active{
@@ -2939,7 +3039,26 @@ textarea:focus{border-color:var(--accent)}
 .clock{font-variant-numeric:tabular-nums;font-size:12px;color:var(--label);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);white-space:nowrap;user-select:none}
 .clock b{color:var(--text);font-weight:600;margin-left:4px}
 .theme-switch{display:inline-flex;align-items:center;gap:6px}
-.theme-switch select{min-width:128px;padding:6px 8px}
+.theme-switch select,
+#themeSelect{
+  min-width:128px;
+  padding:6px 10px;
+  color:var(--text) !important;
+  background:var(--panel2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm);
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+  box-shadow:none !important;
+  appearance:auto;
+  -webkit-appearance:menulist;
+}
+/* 系统原生展开层多为浅底：option 固定深字浅底，保证可读 */
+.theme-switch select option,
+#themeSelect option{
+  color:#0b1220 !important;
+  background:#ffffff !important;
+}
 .theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .theme-opt{position:relative;border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;background:var(--panel2);transition:border-color .15s,box-shadow .15s,transform .15s}
 .theme-opt:hover{border-color:var(--accent);transform:translateY(-1px)}
@@ -2974,7 +3093,7 @@ textarea:focus{border-color:var(--accent)}
       <select id="themeSelect" onchange="setTheme(this.value)"></select>
     </label>
     <span class="clock" id="dashClock" title="上海时间（浏览器本地计算，不请求服务器）">上海 <b>--</b></span>
-    <button class="warn" onclick="sendTgSummary()" id="btnTgSum" title="向 Telegram 发送所有机器汇总">📊 TG 汇总</button>
+    <button class="tg-btn" onclick="sendTgSummary()" id="btnTgSum" title="向 Telegram 发送所有机器汇总">TG 汇总</button>
     <form method="post" action="/logout" style="margin:0"><button type="submit">退出</button></form>
   </div>
 </header>
@@ -3000,22 +3119,27 @@ textarea:focus{border-color:var(--accent)}
       <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>
-    <div class="panel">
+    <div class="panel" id="chartPanel">
       <div class="chart-title-row">
         <h2 id="chartPanelTitle">总流量统计</h2>
+        <label class="chk" title="关闭后隐藏图表区域，节省空间，且不再请求统计接口">
+          <input type="checkbox" id="chkShowChart" checked onchange="setChartPanelVisible(this.checked)"> 显示图表
+        </label>
       </div>
-      <div class="chart-toolbar">
-        <div class="seg" id="modeSeg">
-          <button type="button" data-mode="hour" onclick="setChartMode('hour')">日内</button>
-          <button type="button" class="active" data-mode="week" onclick="setChartMode('week')">周报</button>
-          <button type="button" data-mode="month" onclick="setChartMode('month')">月报</button>
-          <button type="button" data-mode="year" onclick="setChartMode('year')">年报</button>
+      <div id="chartPanelBody">
+        <div class="chart-toolbar">
+          <div class="seg" id="modeSeg">
+            <button type="button" data-mode="hour" onclick="setChartMode('hour')">日内</button>
+            <button type="button" class="active" data-mode="week" onclick="setChartMode('week')">周报</button>
+            <button type="button" data-mode="month" onclick="setChartMode('month')">月报</button>
+            <button type="button" data-mode="year" onclick="setChartMode('year')">年报</button>
+          </div>
+          <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
+          <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
+          <select id="range" onchange="loadHistory()" title="选择统计跨度"></select>
         </div>
-        <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
-        <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
-        <select id="range" onchange="loadHistory()" title="选择统计跨度"></select>
+        <div class="chart-wrap"><canvas id="chart"></canvas></div>
       </div>
-      <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
     <div class="panel">
       <h2>机器列表</h2>
@@ -3100,7 +3224,7 @@ textarea:focus{border-color:var(--accent)}
             <div class="sec-title">
               <h3>3. TG 汇报模板</h3>
               <div class="inline-controls">
-                <button type="button" class="green" onclick="sendTgSummary()" id="btnTgNow" title="立即发送一次 TG 汇总">立即汇报</button>
+                <button type="button" class="tg-btn" onclick="sendTgSummary()" id="btnTgNow" title="立即发送一次 TG 汇总">立即汇报</button>
               </div>
             </div>
             <p class="sec-desc">选择当前汇报模板，或编辑/新建。切换下拉会自动保存为当前 active；改完正文后请点「保存模板」。</p>
@@ -3164,9 +3288,28 @@ textarea:focus{border-color:var(--accent)}
     <div class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
         <h2 style="margin:0">登录日志</h2>
-        <button type="button" onclick="loadLoginLogs()">刷新</button>
+        <div class="inline-controls">
+          <button type="button" onclick="loadLoginLogs()">刷新</button>
+        </div>
       </div>
-      <p class="muted" style="font-size:12px;margin-top:8px">最近登录记录（保留 90 天）。登录成功且已配置 TG 时会发通知。</p>
+      <p class="muted" style="font-size:12px;margin-top:8px">登录记录（自动清理 90 天前）。支持分页；可删除最早的 N 条（N 大于总数时会全部删完）。</p>
+
+      <div class="logs-toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0">
+        <span class="muted" id="logsMeta">共 0 条</span>
+        <span class="muted">每页</span>
+        <select id="logsPageSize" onchange="onLogsPageSizeChange()" style="width:auto;min-width:72px">
+          <option value="10">10</option>
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <div class="inline-controls" style="margin-left:auto">
+          <button type="button" id="logsPrev" onclick="logsGoPage(-1)">上一页</button>
+          <span class="muted" id="logsPageLabel">1 / 1</span>
+          <button type="button" id="logsNext" onclick="logsGoPage(1)">下一页</button>
+        </div>
+      </div>
+
       <div style="overflow:auto">
         <table>
           <thead><tr>
@@ -3174,6 +3317,15 @@ textarea:focus{border-color:var(--accent)}
           </tr></thead>
           <tbody id="loginLogsBody"><tr><td colspan="5">加载中…</td></tr></tbody>
         </table>
+      </div>
+
+      <div class="logs-purge" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line2);display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="margin:0;min-width:160px">
+          <label for="logsPurgeN">删除最早 N 条</label>
+          <input id="logsPurgeN" type="number" min="1" step="1" placeholder="例如 100" style="width:140px">
+        </div>
+        <button type="button" class="danger" onclick="purgeOldestLoginLogs()">删除最早记录</button>
+        <span class="muted" id="logsPurgeHint" style="font-size:12px">只删最旧的；输入超过总数时全部删除</span>
       </div>
     </div>
   </div>
@@ -4189,7 +4341,41 @@ function renderHistChart() {
   }
 }
 
+function isChartPanelVisible() {
+  try { return localStorage.getItem("dash_show_chart") !== "0"; } catch { return true; }
+}
+function setChartPanelVisible(show, opts) {
+  const on = !!show;
+  try { localStorage.setItem("dash_show_chart", on ? "1" : "0"); } catch {}
+  const body = document.getElementById("chartPanelBody");
+  const panel = document.getElementById("chartPanel");
+  const chk = document.getElementById("chkShowChart");
+  if (body) body.classList.toggle("is-hidden", !on);
+  if (panel) panel.classList.toggle("collapsed", !on);
+  if (chk) chk.checked = on;
+  if (!on) {
+    try { if (chart) { chart.destroy(); chart = null; } } catch {}
+    return;
+  }
+  if (!opts || opts.load !== false) {
+    if (!chartHasData(mainPoints)) loadHistory();
+    else {
+      whenChartReady().then(() => { try { renderMainChart(); } catch {} });
+    }
+  }
+}
+function restoreChartPanelVisible() {
+  const on = isChartPanelVisible();
+  const body = document.getElementById("chartPanelBody");
+  const panel = document.getElementById("chartPanel");
+  const chk = document.getElementById("chkShowChart");
+  if (body) body.classList.toggle("is-hidden", !on);
+  if (panel) panel.classList.toggle("collapsed", !on);
+  if (chk) chk.checked = on;
+}
+
 async function loadHistory() {
+  if (!isChartPanelVisible()) return;
   try {
     const p = chartPreset(chartMode);
     const span = readSpan("range", chartMode);
@@ -4299,7 +4485,7 @@ async function refresh(opts = {}) {
     _refreshQueued = opts;
     return _refreshInFlight;
   }
-  const wantHistory = opts.history !== false;
+  const wantHistory = opts.history !== false && isChartPanelVisible();
   const wantTg = opts.tg !== false;
   _refreshInFlight = (async () => {
     try {
@@ -4338,21 +4524,6 @@ async function refresh(opts = {}) {
     }
   })();
   return _refreshInFlight;
-}
-
-async function loadHistory() {
-  try {
-    const p = chartPreset(chartMode);
-    const span = readSpan("range", chartMode);
-    const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
-    const data = await api(q);
-    mainPoints = asChartData(data);
-    await whenChartReady();
-    renderMainChart();
-    saveChartPrefs();
-  } catch (e) {
-    toast("加载统计失败：" + (e && e.message ? e.message : String(e)));
-  }
 }
 
 // ─── TG 汇总 ───
@@ -4584,14 +4755,66 @@ async function loadConfig() {
   }
 }
 
+// ─── 登录日志分页 ───
+let logsPage = 1;
+let logsPageSize = 20;
+let logsTotal = 0;
+let logsPages = 1;
+
+function onLogsPageSizeChange() {
+  const sel = document.getElementById("logsPageSize");
+  const n = sel ? Number(sel.value) : 20;
+  logsPageSize = [10, 20, 50, 100].includes(n) ? n : 20;
+  logsPage = 1;
+  try { localStorage.setItem("dash_logs_page_size", String(logsPageSize)); } catch {}
+  loadLoginLogs();
+}
+function logsGoPage(delta) {
+  const next = logsPage + (Number(delta) || 0);
+  if (next < 1 || next > logsPages) return;
+  logsPage = next;
+  loadLoginLogs();
+}
+function updateLogsPager() {
+  const meta = document.getElementById("logsMeta");
+  const label = document.getElementById("logsPageLabel");
+  const prev = document.getElementById("logsPrev");
+  const next = document.getElementById("logsNext");
+  if (meta) meta.textContent = "共 " + logsTotal + " 条";
+  if (label) label.textContent = logsPage + " / " + logsPages;
+  if (prev) prev.disabled = logsPage <= 1;
+  if (next) next.disabled = logsPage >= logsPages;
+}
 async function loadLoginLogs() {
   const tb = document.getElementById("loginLogsBody");
   if (!tb) return;
+  // 恢复每页条数
   try {
-    const data = await api("/api/login-logs?limit=100");
-    if (!data || !data.ok) { tb.innerHTML = '<tr><td colspan="5">加载失败</td></tr>'; return; }
+    const saved = Number(localStorage.getItem("dash_logs_page_size") || 0);
+    if ([10, 20, 50, 100].includes(saved)) {
+      logsPageSize = saved;
+      const sel = document.getElementById("logsPageSize");
+      if (sel) sel.value = String(saved);
+    }
+  } catch {}
+  try {
+    const q = "/api/login-logs?page=" + encodeURIComponent(logsPage)
+      + "&page_size=" + encodeURIComponent(logsPageSize);
+    const data = await api(q);
+    if (!data || !data.ok) {
+      tb.innerHTML = '<tr><td colspan="5">加载失败</td></tr>';
+      return;
+    }
+    logsTotal = Number(data.total) || 0;
+    logsPage = Number(data.page) || 1;
+    logsPageSize = Number(data.pageSize) || logsPageSize;
+    logsPages = Number(data.pages) || Math.max(1, Math.ceil(logsTotal / logsPageSize) || 1);
+    updateLogsPager();
     const logs = data.logs || [];
-    if (!logs.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#8aa0c6">暂无登录记录</td></tr>'; return; }
+    if (!logs.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="muted">暂无登录记录</td></tr>';
+      return;
+    }
     tb.replaceChildren();
     for (const lg of logs) {
       const tr = document.createElement("tr");
@@ -4610,7 +4833,8 @@ async function loadLoginLogs() {
           const b = document.createElement("span");
           b.className = "badge " + (lg.success ? "" : "off");
           b.textContent = cells[i];
-          td.replaceChild(b, td.firstChild);
+          td.textContent = "";
+          td.appendChild(b);
         }
         td.title = cells[i];
         if (i === 4) td.style.fontSize = "11px";
@@ -4620,6 +4844,39 @@ async function loadLoginLogs() {
     }
   } catch (e) {
     tb.innerHTML = '<tr><td colspan="5">加载失败</td></tr>';
+  }
+}
+async function purgeOldestLoginLogs() {
+  const input = document.getElementById("logsPurgeN");
+  const hint = document.getElementById("logsPurgeHint");
+  const raw = input ? String(input.value || "").trim() : "";
+  const n = Math.floor(Number(raw));
+  if (!raw || !Number.isFinite(n) || n <= 0) {
+    toast("请输入要删除的正整数条数");
+    return;
+  }
+  const preview = logsTotal > 0
+    ? ("当前共 " + logsTotal + " 条，将删除最早 " + Math.min(n, logsTotal) + " 条" + (n > logsTotal ? "（输入超过总数，将全部删除）" : ""))
+    : ("将尝试删除最早 " + n + " 条");
+  if (!confirm(preview + "\n确定删除？此操作不可恢复。")) return;
+  try {
+    const data = await api("/api/login-logs/purge-oldest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: n }),
+    });
+    if (!data || !data.ok) {
+      toast((data && data.error) || "删除失败");
+      return;
+    }
+    if (hint) hint.textContent = data.message || ("已删除 " + (data.deleted || 0) + " 条");
+    toast(data.message || ("已删除 " + (data.deleted || 0) + " 条"));
+    if (input) input.value = "";
+    // 删完后若当前页越界，回到第 1 页
+    logsPage = 1;
+    await loadLoginLogs();
+  } catch (e) {
+    toast("删除失败：" + (e && e.message ? e.message : e));
   }
 }
 
@@ -5289,6 +5546,7 @@ document.getElementById("vpsMid").addEventListener("keydown", e => {
 renderThemeUI();
 loadChartPrefs();
 restoreFilterSortPrefs();
+restoreChartPanelVisible();
 // 恢复勾选
 try {
   const rx = document.getElementById("chkRx");
@@ -5418,11 +5676,29 @@ export default {
       }
     }
 
-    // GET /api/login-logs — 登录日志
+    // GET /api/login-logs — 登录日志（分页：page / page_size，默认每页 20）
+    // 兼容旧参数 limit=（无分页，直接返回数组字段 logs）
     if (req.method === "GET" && url.pathname === "/api/login-logs") {
-      if (!env.DB) return json({ ok: true, logs: [] });
-      const limit = Number(url.searchParams.get("limit") || 100);
-      return json({ ok: true, logs: await getLoginLogs(env, limit) });
+      if (!env.DB) return json({ ok: true, total: 0, page: 1, pageSize: 20, pages: 1, logs: [] });
+      if (url.searchParams.has("limit") && !url.searchParams.has("page") && !url.searchParams.has("page_size")) {
+        const limit = Number(url.searchParams.get("limit") || 100);
+        const logs = await getLoginLogs(env, limit);
+        return json({ ok: true, logs });
+      }
+      const page = Number(url.searchParams.get("page") || 1);
+      const pageSize = Number(url.searchParams.get("page_size") || url.searchParams.get("pageSize") || 20);
+      const result = await getLoginLogs(env, { page, pageSize });
+      return json({ ok: true, ...result });
+    }
+
+    // POST /api/login-logs/purge-oldest — 删除最早 N 条（N 超总数则全删）
+    if (req.method === "POST" && url.pathname === "/api/login-logs/purge-oldest") {
+      if (!env.DB) return json({ ok: false, error: missingDbError(env) }, 500);
+      let body = {};
+      try { body = await req.json(); } catch { body = {}; }
+      const count = body.count != null ? body.count : body.n;
+      const result = await deleteOldestLoginLogs(env, count);
+      return json(result, result.ok ? 200 : 400);
     }
 
     // GET /api/machines

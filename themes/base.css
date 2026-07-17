@@ -26,6 +26,22 @@ button.primary:hover{background:var(--accent2);border-color:var(--accent2)}
 button.green{background:var(--ok);border-color:var(--ok);font-weight:600;color:#fff}
 button.green:hover{background:var(--ok2);border-color:var(--ok2)}
 button.warn{background:var(--warn);border-color:var(--warn);font-weight:600;color:#111}
+/* TG 汇总专用按钮：Telegram 蓝，各主题统一好认 */
+button.tg-btn{
+  background:linear-gradient(180deg,#3b9cf0 0%,#2a7fd4 100%);
+  border:1px solid #1d6fbf;
+  color:#fff;
+  font-weight:700;
+  letter-spacing:.2px;
+  box-shadow:0 2px 8px rgba(42,127,212,.28);
+}
+button.tg-btn:hover{
+  background:linear-gradient(180deg,#4aa8f5 0%,#3189e0 100%);
+  border-color:#1a63ad;
+  box-shadow:0 3px 12px rgba(42,127,212,.36);
+}
+button.tg-btn:active{transform:translateY(1px);box-shadow:0 1px 4px rgba(42,127,212,.25)}
+button.tg-btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;transform:none}
 main{padding:16px 20px 40px;max-width:1200px;margin:0 auto}
 .page{display:none}
 .page.active{display:block}

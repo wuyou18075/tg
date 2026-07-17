@@ -1,18 +1,4 @@
 /* theme picker swatches */
-.theme-switch select{
-  color:#eaf6ff !important;
-  background:#0b1428 !important;
-  border:1px solid #3b82f6 !important;
-  backdrop-filter:none !important;
-  -webkit-backdrop-filter:none !important;
-  box-shadow:none !important;
-}
-html[data-theme="glass"] #themeSelect option,
-html[data-theme="glass"] .theme-switch select option{
-  color:#0b1220 !important;
-  background:#f8fafc !important;
-}
-
 /* 墨夜：哑光控件，无渐变高光 */
 html[data-theme="noir"] button.primary,
 html[data-theme="noir"] .seg button.active{
@@ -350,7 +336,26 @@ textarea:focus{border-color:var(--accent)}
 .clock{font-variant-numeric:tabular-nums;font-size:12px;color:var(--label);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);white-space:nowrap;user-select:none}
 .clock b{color:var(--text);font-weight:600;margin-left:4px}
 .theme-switch{display:inline-flex;align-items:center;gap:6px}
-.theme-switch select{min-width:128px;padding:6px 8px}
+.theme-switch select,
+#themeSelect{
+  min-width:128px;
+  padding:6px 10px;
+  color:var(--text) !important;
+  background:var(--panel2) !important;
+  border:1px solid var(--border) !important;
+  border-radius:var(--radius-sm);
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+  box-shadow:none !important;
+  appearance:auto;
+  -webkit-appearance:menulist;
+}
+/* 系统原生展开层多为浅底：option 固定深字浅底，保证可读 */
+.theme-switch select option,
+#themeSelect option{
+  color:#0b1220 !important;
+  background:#ffffff !important;
+}
 .theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .theme-opt{position:relative;border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;background:var(--panel2);transition:border-color .15s,box-shadow .15s,transform .15s}
 .theme-opt:hover{border-color:var(--accent);transform:translateY(-1px)}

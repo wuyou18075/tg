@@ -17,3 +17,8 @@ html[data-theme="prairie"] button.primary{color:#fff}
 html[data-theme="prairie"] .status-pill.on{color:#2f5a3a;background:#dff0db;border-color:#a8cba1}
 
 html[data-theme="prairie"] .status-pill.off{color:#8a3a3a;background:#f0d4d4;border-color:#d9a0a0}
+
+/* TG 按钮：原谅色 */
+html[data-theme="prairie"] button.tg-btn{
+  background:linear-gradient(180deg,#3f8fd9 0%,#2f6fb8 100%);border-color:#2a5f9e;color:#fff;
+}

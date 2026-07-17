@@ -36,3 +36,9 @@ html[data-theme="crimson"] .settings-card{
 html[data-theme="crimson"] .status-pill.on{color:#86efac;background:rgba(63,174,122,.14);border-color:rgba(63,174,122,.3)}
 
 html[data-theme="crimson"] .status-pill.off{color:#f0a8a8;background:rgba(224,107,107,.14);border-color:rgba(224,107,107,.3)}
+
+/* TG 按钮：绛夜 */
+html[data-theme="crimson"] button.tg-btn{
+  background:linear-gradient(180deg,#c45c6a 0%,#a84856 100%);border-color:#8f3a48;color:#fff;
+  box-shadow:0 2px 8px rgba(168,72,86,.3);
+}

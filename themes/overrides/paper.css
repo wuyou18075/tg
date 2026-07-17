@@ -61,3 +61,8 @@ html[data-theme="prairie"] .settings-card{
 html[data-theme="paper"] .status-pill.on{color:#166534;background:#dcfce7;border-color:#86efac}
 
 html[data-theme="paper"] .status-pill.off{color:#991b1b;background:#fee2e2;border-color:#fca5a5}
+
+/* TG 按钮：雾蓝白 */
+html[data-theme="paper"] button.tg-btn{
+  background:linear-gradient(180deg,#3b6fd4 0%,#2f5fbe 100%);border-color:#274f9e;color:#fff;
+}

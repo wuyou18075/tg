@@ -85,3 +85,9 @@ html[data-theme="noir"] #s_t_hour option{
   color:#0b1220 !important;
   background:#fff !important;
 }
+
+/* TG 按钮：墨夜 */
+html[data-theme="noir"] button.tg-btn{
+  background:#2f6f8a;border-color:#3d8fb0;color:#e8f4fa;box-shadow:none;
+}
+html[data-theme="noir"] button.tg-btn:hover{background:#3d8fb0;border-color:#4fa3c4}

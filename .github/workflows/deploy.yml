@@ -56,6 +56,10 @@ jobs:
           sed -i "s|^database_id = .*|database_id = \"$ID\"|" wrangler.toml
           echo "已把 database_id 写入 wrangler.toml"
 
+      - name: Build themes
+        if: steps.mode.outputs.mode == 'github'
+        run: node scripts/build-themes.mjs
+
       - name: Deploy Worker
         if: steps.mode.outputs.mode == 'github'
         uses: cloudflare/wrangler-action@v4.0.0

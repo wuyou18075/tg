@@ -4,8 +4,10 @@
   "type": "module",
   "main": "cf-worker-example.js",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "start": "wrangler dev"
+    "build:themes": "node scripts/build-themes.mjs",
+    "predeploy": "npm run build:themes",
+    "deploy": "npm run build:themes && wrangler deploy",
+    "start": "npm run build:themes && wrangler dev"
   },
   "cloudflare": {
     "description": {

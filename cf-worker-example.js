@@ -1699,6 +1699,70 @@ async function setConfigValue(env, key, value) {
   ).bind(key, value, now).run();
 }
 
+/** 看板 UI 偏好（D1 config.ui_prefs JSON）— 跨浏览器登录共享 */
+const UI_PREF_DEFAULTS = {
+  theme: "prairie",
+  chart_mode: "week",
+  chart_span_hour: "24",
+  chart_span_week: "7",
+  chart_span_month: "31",
+  chart_span_year: "12",
+  chart_rx: "1",
+  chart_tx: "1",
+  filter_online: "0",
+  sort_by: "last",
+  filter_group: "",
+  list_view: "table",
+  show_rx: "1",
+  show_chart: "1",
+  show_rank: "1",
+  rank_mode: "today",
+  logs_page_size: "20",
+};
+
+async function getUiPrefs(env) {
+  const out = { ...UI_PREF_DEFAULTS };
+  if (!env.DB) return { prefs: out, exists: false };
+  try {
+    const raw = await getConfigValue(env, "ui_prefs");
+    if (!raw) return { prefs: out, exists: false };
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return { prefs: out, exists: false };
+    for (const k of Object.keys(UI_PREF_DEFAULTS)) {
+      if (obj[k] != null && obj[k] !== "") out[k] = String(obj[k]);
+    }
+    return { prefs: out, exists: true };
+  } catch {
+    return { prefs: out, exists: false };
+  }
+}
+
+async function saveUiPrefs(env, patch) {
+  if (!env.DB) throw new Error(missingDbError(env));
+  const got = await getUiPrefs(env);
+  const next = { ...(got.prefs || UI_PREF_DEFAULTS) };
+  if (patch && typeof patch === "object") {
+    for (const k of Object.keys(UI_PREF_DEFAULTS)) {
+      if (patch[k] != null) next[k] = String(patch[k]);
+    }
+  }
+  const themes = ["prairie","default","cyber","noir","glass","paper","crimson"];
+  if (!themes.includes(next.theme)) next.theme = "prairie";
+  if (!["hour","week","month","year","day"].includes(next.chart_mode)) next.chart_mode = "week";
+  if (next.chart_mode === "day") next.chart_mode = "week";
+  if (!["last","today_desc","today_asc","month_desc","uptime_desc"].includes(next.sort_by)) next.sort_by = "last";
+  if (next.list_view !== "card") next.list_view = "table";
+  if (next.rank_mode !== "month") next.rank_mode = "today";
+  const ps = Number(next.logs_page_size);
+  if (![10,20,50,100].includes(ps)) next.logs_page_size = "20";
+  for (const k of ["chart_rx","chart_tx","filter_online","show_rx","show_chart","show_rank"]) {
+    next[k] = (next[k] === "0" || next[k] === "false") ? "0" : "1";
+  }
+  await setConfigValue(env, "ui_prefs", JSON.stringify(next));
+  return next;
+}
+
+
 /** 规范化模板列表：trim id、去空、去重，保证下拉 value 可回显 */
 function normalizeTemplateList(templates) {
   const arr = Array.isArray(templates) ? templates : [];
@@ -2070,11 +2134,59 @@ button:disabled{background:#33415f;cursor:not-allowed}
 </div>`;
 }
 
-function dashboardPage() {
-  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+const SERVER_THEME_IDS = ["prairie","default","cyber","noir","glass","paper","crimson"];
+const SERVER_THEME_ALIAS = { matrix:"prairie", aurora:"glass", ice:"paper", ember:"noir", "草原绿":"prairie", "默认":"default" };
+function normalizeThemeIdServer(id) {
+  let s = String(id == null ? "" : id).trim();
+  if (SERVER_THEME_ALIAS[s]) s = SERVER_THEME_ALIAS[s];
+  return SERVER_THEME_IDS.includes(s) ? s : "prairie";
+}
+function readThemeFromRequest(req) {
+  try {
+    const raw = (req && req.headers && req.headers.get("Cookie")) || "";
+    const m = raw.match(/(?:^|;\s*)dash_theme=([^;]*)/);
+    if (!m) return null;
+    return decodeURIComponent(String(m[1] || "").trim());
+  } catch { return null; }
+}
+function dashboardPage(req, serverPrefs) {
+  // 优先 D1 偏好主题，其次 cookie，默认 prairie
+  let bootTheme = "prairie";
+  try {
+    if (serverPrefs && serverPrefs.theme) bootTheme = normalizeThemeIdServer(serverPrefs.theme);
+    else bootTheme = normalizeThemeIdServer(readThemeFromRequest(req));
+  } catch {
+    bootTheme = normalizeThemeIdServer(readThemeFromRequest(req));
+  }
+  return `<!doctype html><html lang="zh-CN" data-theme="${bootTheme}"><meta charset="utf-8">
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>流量看板</title>
+<script>
+(function(){
+  var k="dash_theme";
+  var allowed=["prairie","default","cyber","noir","glass","paper","crimson"];
+  var alias={matrix:"prairie",aurora:"glass",ice:"paper",ember:"noir"};
+  function norm(id){
+    id=String(id==null?"":id).trim();
+    if(alias[id]) id=alias[id];
+    return allowed.indexOf(id)>=0?id:"prairie";
+  }
+  var t=null;
+  try{t=localStorage.getItem(k)}catch(e){}
+  if(!t){
+    try{
+      var m=document.cookie.match(/(?:^|;\s*)dash_theme=([^;]+)/);
+      if(m) t=decodeURIComponent(m[1]);
+    }catch(e){}
+  }
+  if(!t) t=document.documentElement.getAttribute("data-theme");
+  t=norm(t);
+  document.documentElement.setAttribute("data-theme", t);
+  try{localStorage.setItem(k,t)}catch(e){}
+  try{document.cookie=k+"="+encodeURIComponent(t)+"; path=/; max-age=31536000; SameSite=Lax"}catch(e){}
+})();
+</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 <style>
@@ -3852,6 +3964,7 @@ let rankMode = "today"; // today | month
 function setRankMode(mode) {
   rankMode = mode === "month" ? "month" : "today";
   try { localStorage.setItem("dash_rank_mode", rankMode); } catch {}
+  try { scheduleSaveUiPrefs(); } catch {}
   document.querySelectorAll("#rankSeg button").forEach((b) => {
     b.classList.toggle("active", b.dataset.rank === rankMode);
   });
@@ -3865,6 +3978,7 @@ function isRankPanelVisible() {
 function setRankPanelVisible(show, opts) {
   const on = !!show;
   try { localStorage.setItem("dash_show_rank", on ? "1" : "0"); } catch {}
+  try { scheduleSaveUiPrefs(); } catch {}
   const panel = document.getElementById("rankPanel");
   const chk = document.getElementById("chkShowRank");
   if (panel) {
@@ -4239,10 +4353,128 @@ function onFilterSortChange() {
       localStorage.setItem("dash_filter_group", filterGroup);
     }
   } catch { /* ignore */ }
+  scheduleSaveUiPrefs();
   renderMachineList();
 }
 
 /** 统一恢复看板展示偏好（下次登录沿用） */
+/** 收集当前 UI 偏好 → 写入 D1（跨浏览器） */
+function collectUiPrefs() {
+  const r = document.getElementById("range");
+  const fo = document.getElementById("filterOnline");
+  const sort = document.getElementById("sortBy");
+  const fg = document.getElementById("filterGroup");
+  const rx = document.getElementById("chkRx");
+  const tx = document.getElementById("chkTx");
+  let theme = "prairie";
+  try {
+    theme = localStorage.getItem("dash_theme")
+      || document.documentElement.getAttribute("data-theme")
+      || "prairie";
+  } catch {}
+  const prefs = {
+    theme: theme,
+    chart_mode: chartMode || "week",
+    chart_span_hour: "24",
+    chart_span_week: "7",
+    chart_span_month: "31",
+    chart_span_year: "12",
+    chart_rx: (rx ? rx.checked : true) ? "1" : "0",
+    chart_tx: (tx ? tx.checked : true) ? "1" : "0",
+    filter_online: (fo && fo.checked) ? "1" : "0",
+    sort_by: (sort && sort.value) || "last",
+    filter_group: (fg ? fg.value : filterGroup) || "",
+    list_view: listViewMode === "card" ? "card" : "table",
+    show_rx: showInbound() ? "1" : "0",
+    show_chart: isChartPanelVisible() ? "1" : "0",
+    show_rank: isRankPanelVisible() ? "1" : "0",
+    rank_mode: rankMode === "month" ? "month" : "today",
+    logs_page_size: String(logsPageSize || 20),
+  };
+  try {
+    prefs.chart_span_hour = localStorage.getItem("dash_chart_span_hour") || "24";
+    prefs.chart_span_week = localStorage.getItem("dash_chart_span_week") || "7";
+    prefs.chart_span_month = localStorage.getItem("dash_chart_span_month") || "31";
+    prefs.chart_span_year = localStorage.getItem("dash_chart_span_year") || "12";
+  } catch {}
+  if (r && r.value) {
+    const key = "chart_span_" + (chartMode || "week");
+    if (prefs[key] != null) prefs[key] = String(r.value);
+  }
+  return prefs;
+}
+
+function writeUiPrefsLocal(prefs) {
+  if (!prefs || typeof prefs !== "object") return;
+  try {
+    if (prefs.theme) {
+      localStorage.setItem("dash_theme", prefs.theme);
+      document.cookie = "dash_theme=" + encodeURIComponent(prefs.theme)
+        + "; path=/; max-age=31536000; SameSite=Lax";
+    }
+    if (prefs.chart_mode) localStorage.setItem("dash_chart_mode", prefs.chart_mode);
+    for (const m of ["hour","week","month","year"]) {
+      const k = "chart_span_" + m;
+      if (prefs[k] != null) localStorage.setItem("dash_chart_span_" + m, String(prefs[k]));
+    }
+    if (prefs.chart_rx != null) localStorage.setItem("dash_chart_rx", prefs.chart_rx === "0" ? "0" : "1");
+    if (prefs.chart_tx != null) localStorage.setItem("dash_chart_tx", prefs.chart_tx === "0" ? "0" : "1");
+    if (prefs.filter_online != null) localStorage.setItem("dash_filter_online", prefs.filter_online === "1" ? "1" : "0");
+    if (prefs.sort_by) localStorage.setItem("dash_sort_by", prefs.sort_by);
+    if (prefs.filter_group != null) localStorage.setItem("dash_filter_group", String(prefs.filter_group));
+    if (prefs.list_view) localStorage.setItem("dash_list_view", prefs.list_view === "card" ? "card" : "table");
+    if (prefs.show_rx != null) localStorage.setItem("dash_show_rx", prefs.show_rx === "0" ? "0" : "1");
+    if (prefs.show_chart != null) localStorage.setItem("dash_show_chart", prefs.show_chart === "0" ? "0" : "1");
+    if (prefs.show_rank != null) localStorage.setItem("dash_show_rank", prefs.show_rank === "0" ? "0" : "1");
+    if (prefs.rank_mode) localStorage.setItem("dash_rank_mode", prefs.rank_mode === "month" ? "month" : "today");
+    if (prefs.logs_page_size) localStorage.setItem("dash_logs_page_size", String(prefs.logs_page_size));
+  } catch { /* ignore */ }
+}
+
+let _uiPrefSaveTimer = null;
+let _uiPrefSaveInflight = false;
+function scheduleSaveUiPrefs() {
+  try { writeUiPrefsLocal(collectUiPrefs()); } catch {}
+  if (_uiPrefSaveTimer) clearTimeout(_uiPrefSaveTimer);
+  _uiPrefSaveTimer = setTimeout(saveUiPrefsNow, 450);
+}
+async function saveUiPrefsNow() {
+  if (_uiPrefSaveInflight) return;
+  _uiPrefSaveInflight = true;
+  try {
+    const prefs = collectUiPrefs();
+    writeUiPrefsLocal(prefs);
+    await api("/api/ui-prefs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefs }),
+    });
+  } catch (e) {
+    console.log("saveUiPrefs", e);
+  } finally {
+    _uiPrefSaveInflight = false;
+  }
+}
+
+async function loadUiPrefsFromServer() {
+  try {
+    const data = await api("/api/ui-prefs");
+    if (!data || !data.ok) return false;
+    // D1 尚无记录：把当前本地偏好上传，不覆盖用户已有本地设置
+    if (!data.exists) {
+      try { await saveUiPrefsNow(); } catch {}
+      return false;
+    }
+    if (!data.prefs) return false;
+    writeUiPrefsLocal(data.prefs);
+    restoreAllUiPrefs();
+    return true;
+  } catch (e) {
+    console.log("loadUiPrefsFromServer", e);
+    return false;
+  }
+}
+
 function restoreAllUiPrefs() {
   // 主题
   try { renderThemeUI(); } catch {}
@@ -4350,6 +4582,7 @@ function fillGroupFilterOptions() {
 function setListViewMode(mode) {
   listViewMode = mode === "card" ? "card" : "table";
   try { localStorage.setItem("dash_list_view", listViewMode); } catch {}
+  scheduleSaveUiPrefs();
   applyListViewMode();
   renderMachineList();
 }
@@ -5047,6 +5280,7 @@ function saveChartPrefs() {
     if (rx) localStorage.setItem("dash_chart_rx", rx.checked ? "1" : "0");
     if (tx) localStorage.setItem("dash_chart_tx", tx.checked ? "1" : "0");
   } catch { /* ignore */ }
+  try { scheduleSaveUiPrefs(); } catch {}
 }
 function loadChartPrefs() {
   try {
@@ -5535,6 +5769,7 @@ function setShowInbound(on) {
   try { if (isChartPanelVisible()) renderMainChart(); } catch {}
   try { if (isRankPanelVisible()) renderRankChart(); } catch {}
   try { if (histMid) renderHistChart(); } catch {}
+  try { scheduleSaveUiPrefs(); } catch {}
 }
 function restoreShowInbound() {
   const on = showInbound();
@@ -5568,6 +5803,7 @@ function isChartPanelVisible() {
 function setChartPanelVisible(show, opts) {
   const on = !!show;
   try { localStorage.setItem("dash_show_chart", on ? "1" : "0"); } catch {}
+  try { scheduleSaveUiPrefs(); } catch {}
   const body = document.getElementById("chartPanelBody");
   const panel = document.getElementById("chartPanel");
   const chk = document.getElementById("chkShowChart");
@@ -5871,6 +6107,11 @@ function setTheme(id, opts) {
   const theme = normalizeTheme(id);
   document.documentElement.setAttribute("data-theme", theme);
   try { localStorage.setItem("dash_theme", theme); } catch {}
+  try {
+    document.cookie = "dash_theme=" + encodeURIComponent(theme)
+      + "; path=/; max-age=31536000; SameSite=Lax";
+  } catch {}
+  try { scheduleSaveUiPrefs(); } catch {}
   const sel = document.getElementById("themeSelect");
   if (sel) sel.value = theme;
   document.querySelectorAll(".theme-opt").forEach(el => {
@@ -5908,8 +6149,15 @@ function renderThemeUI() {
       grid.appendChild(div);
     }
   }
-  let saved = DEFAULT_THEME_ID;
-  try { saved = localStorage.getItem("dash_theme") || DEFAULT_THEME_ID; } catch {}
+  let saved = null;
+  try { saved = localStorage.getItem("dash_theme"); } catch {}
+  if (!saved) {
+    try {
+      const m = document.cookie.match(/(?:^|;\s*)dash_theme=([^;]+)/);
+      if (m) saved = decodeURIComponent(m[1]);
+    } catch {}
+  }
+  if (!saved) saved = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME_ID;
   setTheme(saved, { redraw: false });
 }
 
@@ -6007,6 +6255,7 @@ function onLogsPageSizeChange() {
   logsPageSize = [10, 20, 50, 100].includes(n) ? n : 20;
   logsPage = 1;
   try { localStorage.setItem("dash_logs_page_size", String(logsPageSize)); } catch {}
+  try { scheduleSaveUiPrefs(); } catch {}
   loadLoginLogs();
 }
 function logsGoPage(delta) {
@@ -6798,11 +7047,14 @@ document.getElementById("vpsMid").addEventListener("keydown", e => {
   if (e.key === "Enter") genCmd();
 });
 
-// 一次性恢复所有展示偏好（主题/筛选/排序/视图/图表/开关）
+// 先本地恢复，再拉 D1 偏好覆盖（跨浏览器）
 restoreAllUiPrefs();
 tickDashClock();
 setInterval(tickDashClock, 1000);
-refresh();
+(async function bootUi() {
+  try { await loadUiPrefsFromServer(); } catch (e) { console.log("bootUi prefs", e); }
+  try { await refresh(); } catch (e) { console.log("bootUi refresh", e); }
+})();
 </script>`;
 }
 
@@ -7044,6 +7296,27 @@ export default {
       catch (e) { return json({ ok: false, error: String(e) }, 400); }
     }
 
+    // GET/POST /api/ui-prefs — 看板展示偏好（D1，跨浏览器）
+    if (req.method === "GET" && url.pathname === "/api/ui-prefs") {
+      try {
+        const got = await getUiPrefs(env);
+        return json({ ok: true, exists: !!got.exists, prefs: got.prefs });
+      } catch (e) {
+        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/api/ui-prefs") {
+      try {
+        if (!env.DB) return json({ ok: false, error: missingDbError(env) }, 500);
+        let body = {};
+        try { body = await req.json(); } catch { body = {}; }
+        const prefs = await saveUiPrefs(env, (body && body.prefs) || body || {});
+        return json({ ok: true, prefs });
+      } catch (e) {
+        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
+      }
+    }
+
     // GET /api/generate — 生成一键命令（含独立密码）
     if (req.method === "GET" && url.pathname === "/api/generate") {
       const mid = String(url.searchParams.get("mid") || "").trim();
@@ -7184,7 +7457,12 @@ export default {
       return new Response(bytes, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
     }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return html(dashboardPage());
+      let bootPrefs = null;
+      try {
+        const got = await getUiPrefs(env);
+        bootPrefs = got && got.exists ? got.prefs : null;
+      } catch {}
+      return html(dashboardPage(req, bootPrefs));
     }
 
     return json({ ok: false, error: "not found" }, 404);

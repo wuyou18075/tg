@@ -2948,12 +2948,26 @@ function readSpan(selId, mode) {
 }
 
 function switchTab(name) {
+  // 页面/导航 id 映射（settings 的 tab 是 tabSet，不是 tabSettings）
+  const map = {
+    dash: { page: "pageDash", tab: "tabDash" },
+    settings: { page: "pageSettings", tab: "tabSet" },
+    logs: { page: "pageLogs", tab: "tabLogs" },
+  };
+  const m = map[name] || {
+    page: "page" + name[0].toUpperCase() + name.slice(1),
+    tab: "tab" + name[0].toUpperCase() + name.slice(1),
+  };
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   document.querySelectorAll(".nav a").forEach(a => a.classList.remove("active"));
-  const pname = name[0].toUpperCase() + name.slice(1);
-  document.getElementById("page" + pname).classList.add("active");
-  document.getElementById("tab" + pname).classList.add("active");
-  if (name === "settings") { loadConfig(); loadTemplates(); }
+  const page = document.getElementById(m.page);
+  const tab = document.getElementById(m.tab);
+  if (page) page.classList.add("active");
+  if (tab) tab.classList.add("active");
+  if (name === "settings") {
+    try { loadConfig(); } catch (e) { console.log("loadConfig", e); }
+    try { loadTemplates(); } catch (e) { console.log("loadTemplates", e); }
+  }
   // 回看板只刷新列表，图表有数据则不强制重拉，减少卡顿感
   if (name === "dash") refresh({ history: !chartHasData(mainPoints), tg: false });
   if (name === "logs") loadLoginLogs();
@@ -3445,17 +3459,31 @@ function buildLineChart(canvas, points, opts) {
 
 /** 堆叠柱：每个日期两根柱（入站 / 出站）；每根柱内按 VPS 分色堆叠，流量大的在底部 */
 function vpsPalette(id, i) {
-  // 固定高区分度色板；同 id 稳定取色
+  // 按排序序号取色，相邻机器色相跨度大（蓝/橙/绿/红/紫…），避免邻近相似
   const palette = [
-    "#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
-    "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
-    "#6366f1", "#eab308", "#22c55e", "#f43f5e", "#a855f7",
-    "#0ea5e9", "#d946ef", "#65a30d", "#fb7185", "#38bdf8",
+    "#2563eb", // 蓝
+    "#f59e0b", // 琥珀
+    "#16a34a", // 绿
+    "#dc2626", // 红
+    "#7c3aed", // 紫
+    "#0891b2", // 青
+    "#ca8a04", // 金
+    "#db2777", // 玫红
+    "#0d9488", // 青绿
+    "#ea580c", // 橙
+    "#4f46e5", // 靛
+    "#65a30d", // 黄绿
+    "#e11d48", // 玫
+    "#0284c7", // 天蓝
+    "#9333ea", // 亮紫
+    "#b45309", // 棕橙
+    "#059669", // 翠绿
+    "#c026d3", // 品红
+    "#1d4ed8", // 深蓝
+    "#a16207", // 土黄
   ];
-  let h = 0;
-  const s = String(id || "");
-  for (let k = 0; k < s.length; k++) h = (h * 31 + s.charCodeAt(k)) >>> 0;
-  return palette[(h + (i || 0)) % palette.length];
+  const idx = Number.isFinite(Number(i)) ? Math.abs(Number(i)) : 0;
+  return palette[idx % palette.length];
 }
 function hexAlpha(hex, a) {
   const h = String(hex || "#888888").replace("#", "");
@@ -5036,6 +5064,14 @@ export default {
     }
 
     // GET / — 看板
+    if (req.method === "GET" && (url.pathname === "/favicon.ico" || url.pathname === "/favicon.png")) {
+      // 1x1 transparent PNG
+      const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W5a0AAAAASUVORK5CYII=";
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Response(bytes, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+    }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       return html(dashboardPage());
     }

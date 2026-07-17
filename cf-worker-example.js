@@ -636,9 +636,10 @@ async function getHistoryHourly(env, { mid, span }) {
 }
 
 /** 日/月聚合：单机 mid 或全部（mid 空）。
- *  day:  每天取各机最后一条 snapshot 的 today_rx/tx，再按日求和
- *  month: 每月取各机最后一条 snapshot 的 month_rx/tx，再按月求和
- *  分桶统一用 Asia/Shanghai，与 VPS 本机「今日」对齐
+ *  day:  每天取各机最后一条 snapshot 的 today_rx/tx
+ *  month: 每月取各机最后一条 snapshot 的 month_rx/tx
+ *  返回 totals + 每机序列，供「入/出双柱 + VPS 分色堆叠」
+ *  分桶统一用 Asia/Shanghai
  */
 async function getHistoryAgg(env, { mid, mode, span }) {
   const isMonth = mode === "month";
@@ -658,29 +659,28 @@ async function getHistoryAgg(env, { mid, mode, span }) {
   const { results } = await env.DB.prepare(sql).bind(...binds).all();
   const rows = results || [];
 
-  // key → { rx, tx }  先按 (bucket, machine) 取最后一条，再跨机求和
+  // (bucket|mid) → 最后一条
   const lastByBucketMid = new Map();
   for (const r of rows) {
     const bucket = shanghaiBucket(Number(r.ts) || 0, isMonth);
     const k = bucket + "|" + r.machine_id;
     lastByBucketMid.set(k, {
       bucket,
+      mid: r.machine_id,
       rx: Number(isMonth ? r.month_rx : r.today_rx) || 0,
       tx: Number(isMonth ? r.month_tx : r.today_tx) || 0,
     });
   }
 
-  const byBucket = new Map();
-  for (const v of lastByBucketMid.values()) {
-    const cur = byBucket.get(v.bucket) || { rx: 0, tx: 0 };
-    cur.rx += v.rx;
-    cur.tx += v.tx;
-    byBucket.set(v.bucket, cur);
+  // 补齐时间轴
+  const labels = [];
+  for (let i = n - 1; i >= 0; i--) {
+    labels.push(shanghaiLabelOffset(i, isMonth));
   }
 
-  // 用 machines 表「当前值」覆盖今天/本月桶：获取流量已更新列表但 snapshot 尚未写入时，图也能显示当天
+  // live 覆盖今天/本月：按机写入
   try {
-    let liveSql = `SELECT machine_id, today_rx, today_tx, month_rx, month_tx, last_ts FROM machines`;
+    let liveSql = `SELECT machine_id, today_rx, today_tx, month_rx, month_tx FROM machines`;
     const liveBinds = [];
     if (mid) {
       liveSql += ` WHERE machine_id = ?`;
@@ -690,38 +690,59 @@ async function getHistoryAgg(env, { mid, mode, span }) {
       ? await env.DB.prepare(liveSql).bind(...liveBinds).all()
       : await env.DB.prepare(liveSql).all();
     const liveRows = live.results || [];
-    if (liveRows.length) {
-      const todayKey = shanghaiBucket(now, false);
-      const monthKey = shanghaiBucket(now, true);
-      if (isMonth) {
-        let rx = 0, tx = 0;
-        for (const r of liveRows) {
-          rx += Number(r.month_rx) || 0;
-          tx += Number(r.month_tx) || 0;
-        }
-        byBucket.set(monthKey, { rx, tx });
-      } else {
-        let rx = 0, tx = 0;
-        for (const r of liveRows) {
-          rx += Number(r.today_rx) || 0;
-          tx += Number(r.today_tx) || 0;
-        }
-        byBucket.set(todayKey, { rx, tx });
-      }
+    const todayKey = shanghaiBucket(now, false);
+    const monthKey = shanghaiBucket(now, true);
+    const key = isMonth ? monthKey : todayKey;
+    for (const r of liveRows) {
+      const k = key + "|" + r.machine_id;
+      lastByBucketMid.set(k, {
+        bucket: key,
+        mid: r.machine_id,
+        rx: Number(isMonth ? r.month_rx : r.today_rx) || 0,
+        tx: Number(isMonth ? r.month_tx : r.today_tx) || 0,
+      });
     }
-  } catch { /* ignore live overlay */ }
+  } catch { /* ignore */ }
 
-  // 补齐时间轴空桶（上海时区）
-  const labels = [];
-  for (let i = n - 1; i >= 0; i--) {
-    labels.push(shanghaiLabelOffset(i, isMonth));
+  // 收集机器 + 总流量（用于排序：大→小，堆叠时先画的在底部）
+  const totalsByMid = new Map(); // mid -> total bytes
+  for (const v of lastByBucketMid.values()) {
+    const t = (totalsByMid.get(v.mid) || 0) + v.rx + v.tx;
+    totalsByMid.set(v.mid, t);
+  }
+  const machineIds = [...totalsByMid.keys()].sort((a, b) => (totalsByMid.get(b) || 0) - (totalsByMid.get(a) || 0));
+
+  // series: mid -> { rx: number[], tx: number[] } 对齐 labels
+  const series = {};
+  for (const mId of machineIds) {
+    const rxArr = [];
+    const txArr = [];
+    for (const lab of labels) {
+      const hit = lastByBucketMid.get(lab + "|" + mId);
+      rxArr.push(hit ? hit.rx : 0);
+      txArr.push(hit ? hit.tx : 0);
+    }
+    series[mId] = { rx: rxArr, tx: txArr };
   }
 
-  const points = labels.map((bucket) => {
-    const v = byBucket.get(bucket) || { rx: 0, tx: 0 };
-    return { bucket, rx: v.rx, tx: v.tx, total: v.rx + v.tx };
+  // points 合计（兼容旧前端 / 标签）
+  const points = labels.map((bucket, i) => {
+    let rx = 0, tx = 0;
+    for (const mId of machineIds) {
+      rx += series[mId].rx[i] || 0;
+      tx += series[mId].tx[i] || 0;
+    }
+    return { bucket, rx, tx, total: rx + tx };
   });
-  return { mode: isMonth ? "month" : "day", span: n, machine_id: mid || null, points };
+
+  return {
+    mode: isMonth ? "month" : "day",
+    span: n,
+    machine_id: mid || null,
+    points,
+    machines: machineIds,
+    series,
+  };
 }
 
 async function getConfig(env) {
@@ -2805,9 +2826,32 @@ const selectedMids = new Set();
 let histChart;
 let chartMode = "week";      // hour | week | month | year  （总览）
 let histMode = "week";       // hour | week | month | year  （单机弹窗）
-let mainPoints = [];         // 总览聚合点
-let histPoints = [];         // 单机聚合点
+let mainPoints = [];         // 总览：points 或完整 {points,machines,series}
+let histPoints = [];         // 单机：同上
 let histMid = null;
+
+function chartHasData(d) {
+  if (!d) return false;
+  if (Array.isArray(d)) return d.length > 0;
+  if (d.points && d.points.length) return true;
+  if (d.machines && d.machines.length) return true;
+  return false;
+}
+function asChartData(data) {
+  if (!data) return { points: [], machines: [], series: {} };
+  // 新格式
+  if (data.series || data.machines) {
+    return {
+      points: data.points || [],
+      machines: data.machines || [],
+      series: data.series || {},
+    };
+  }
+  // 旧格式：只有 points
+  if (Array.isArray(data.points)) return { points: data.points, machines: [], series: {} };
+  if (Array.isArray(data)) return { points: data, machines: [], series: {} };
+  return { points: [], machines: [], series: {} };
+}
 
 /** 统计口径：UI mode → API mode + 默认跨度 + 文案
  *  周报=按日；月报=按日可选天数；年报=按月；日内=小时折线
@@ -2868,7 +2912,7 @@ function switchTab(name) {
   document.getElementById("tab" + pname).classList.add("active");
   if (name === "settings") { loadConfig(); loadTemplates(); }
   // 回看板只刷新列表，图表有数据则不强制重拉，减少卡顿感
-  if (name === "dash") refresh({ history: !mainPoints.length, tg: false });
+  if (name === "dash") refresh({ history: !chartHasData(mainPoints), tg: false });
   if (name === "logs") loadLoginLogs();
 }
 
@@ -3200,27 +3244,32 @@ const valueLabelPlugin = {
     const tc = themeChartColors();
 
     if (isBar) {
-      // 堆叠柱：在整柱顶部标「入+出」合计
+      // 双柱：分别在「入站 stack」与「出站 stack」顶部标合计
       ctx.textBaseline = "bottom";
       ctx.fillStyle = tc.label;
       for (let i = 0; i < n; i++) {
-        let sum = 0;
-        let topMeta = null;
+        const tops = { rx: null, tx: null, other: null };
+        const sums = { rx: 0, tx: 0, other: 0 };
         for (let di = 0; di < data.datasets.length; di++) {
           const ds = data.datasets[di];
-          if (ds.hidden) continue;
-          const v = Number(ds.data[i]) || 0;
-          sum += v;
+          if (!ds || ds.hidden) continue;
           const meta = chart.getDatasetMeta(di);
-          if (meta && meta.data && meta.data[i]) topMeta = meta.data[i];
+          if (meta && meta.hidden) continue;
+          const v = Number(ds.data[i]) || 0;
+          const stack = ds.stack === "tx" ? "tx" : (ds.stack === "rx" ? "rx" : "other");
+          sums[stack] += v;
+          if (meta && meta.data && meta.data[i]) tops[stack] = meta.data[i];
         }
-        if (!topMeta || !(sum > 0)) continue;
-        const t = fmtChartLabel(sum);
-        if (!t) continue;
-        const x = topMeta.x;
-        const y = Math.min(topMeta.y, chartArea.bottom) - 4;
-        if (y < chartArea.top + 2) continue;
-        ctx.fillText(t, x, y);
+        for (const stack of ["rx", "tx", "other"]) {
+          const el = tops[stack];
+          const sum = sums[stack];
+          if (!el || !(sum > 0)) continue;
+          const t = fmtChartLabel(sum);
+          if (!t) continue;
+          const y = Math.min(el.y, chartArea.bottom) - 4;
+          if (y < chartArea.top + 2) continue;
+          ctx.fillText(t, el.x, y);
+        }
       }
     } else {
       // 折线：每个可见数据集的点旁标自身值（略上移，双线时第二层再抬一点）
@@ -3351,46 +3400,126 @@ function buildLineChart(canvas, points, opts) {
   });
 }
 
-/** 堆叠柱：入站/出站分色叠成一根，高度=合计；勾选控制显示哪一层 */
-function buildStackedChart(canvas, points, opts) {
+/** 堆叠柱：每个日期两根柱（入站 / 出站）；每根柱内按 VPS 分色堆叠，流量大的在底部 */
+function vpsPalette(id, i) {
+  // 固定高区分度色板；同 id 稳定取色
+  const palette = [
+    "#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
+    "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
+    "#6366f1", "#eab308", "#22c55e", "#f43f5e", "#a855f7",
+    "#0ea5e9", "#d946ef", "#65a30d", "#fb7185", "#38bdf8",
+  ];
+  let h = 0;
+  const s = String(id || "");
+  for (let k = 0; k < s.length; k++) h = (h * 31 + s.charCodeAt(k)) >>> 0;
+  return palette[(h + (i || 0)) % palette.length];
+}
+function hexAlpha(hex, a) {
+  const h = String(hex || "#888888").replace("#", "");
+  if (h.length !== 6) return hex;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return "rgba(" + r + "," + g + "," + b + "," + a + ")";
+}
+function buildStackedChart(canvas, chartData, opts) {
   const showRx = opts.showRx !== false;
   const showTx = opts.showTx !== false;
   const title = opts.title || "";
-  const labels = (points || []).map(p => p.bucket);
-  const rx = (points || []).map(p => (Number(p.rx) || 0) / 1e9);
-  const tx = (points || []).map(p => (Number(p.tx) || 0) / 1e9);
-  const datasets = [];
   const tc = themeChartColors();
-  if (showRx) {
-    datasets.push({
-      label: "入站 GB",
-      data: rx,
-      backgroundColor: tc.rxSoft,
-      borderColor: tc.rx,
-      borderWidth: 1.5,
-      borderRadius: 3,
-      stack: "t",
-    });
+
+  // 兼容：旧格式 points[] 或 新格式 {points, machines, series}
+  let points = [];
+  let machineIds = [];
+  let series = null;
+  if (Array.isArray(chartData)) {
+    points = chartData;
+  } else if (chartData && typeof chartData === "object") {
+    points = chartData.points || [];
+    machineIds = chartData.machines || [];
+    series = chartData.series || null;
   }
-  if (showTx) {
-    datasets.push({
-      label: "出站 GB",
-      data: tx,
-      backgroundColor: tc.txSoft,
-      borderColor: tc.tx,
-      borderWidth: 1.5,
-      borderRadius: 3,
-      stack: "t",
+  const labels = points.map(p => p.bucket);
+  const datasets = [];
+
+  if (series && machineIds.length) {
+    // 每机两个 dataset：stack "rx" / stack "tx"；数组顺序 = 从下到上，machineIds 已按总量降序
+    machineIds.forEach((mId, idx) => {
+      const color = vpsPalette(mId, idx);
+      const s = series[mId] || { rx: [], tx: [] };
+      if (showRx) {
+        datasets.push({
+          label: mId + " · 入",
+          data: (s.rx || []).map(v => (Number(v) || 0) / 1e9),
+          backgroundColor: hexAlpha(color, 0.92),
+          borderColor: color,
+          borderWidth: 1,
+          borderRadius: 2,
+          stack: "rx",
+          _mid: mId,
+          _dir: "rx",
+        });
+      }
+      if (showTx) {
+        datasets.push({
+          label: mId + " · 出",
+          data: (s.tx || []).map(v => (Number(v) || 0) / 1e9),
+          backgroundColor: hexAlpha(color, 0.55),
+          borderColor: color,
+          borderWidth: 1,
+          borderRadius: 2,
+          stack: "tx",
+          _mid: mId,
+          _dir: "tx",
+        });
+      }
     });
+  } else {
+    // 回退：合计入/出两柱
+    const rx = points.map(p => (Number(p.rx) || 0) / 1e9);
+    const tx = points.map(p => (Number(p.tx) || 0) / 1e9);
+    if (showRx) {
+      datasets.push({
+        label: "入站 GB",
+        data: rx,
+        backgroundColor: tc.rxSoft,
+        borderColor: tc.rx,
+        borderWidth: 1.5,
+        borderRadius: 3,
+        stack: "rx",
+      });
+    }
+    if (showTx) {
+      datasets.push({
+        label: "出站 GB",
+        data: tx,
+        backgroundColor: tc.txSoft,
+        borderColor: tc.tx,
+        borderWidth: 1.5,
+        borderRadius: 3,
+        stack: "tx",
+      });
+    }
   }
+
   if (!datasets.length) {
     datasets.push({
       label: "无筛选",
       data: labels.map(() => 0),
       backgroundColor: "rgba(100,116,139,0.3)",
-      stack: "t",
+      stack: "rx",
     });
   }
+
+  // 图例：同一 VPS 的入/出合并显示为机器名（减少一倍图例）
+  const legendFilter = (item, data) => {
+    const ds = data.datasets[item.datasetIndex];
+    if (!ds) return true;
+    if (ds._dir === "tx" && machineIds.length) return false; // 只显示「入」那条当机器图例
+    if (ds._mid) item.text = ds._mid;
+    return true;
+  };
+
   return new Chart(canvas, {
     type: "bar",
     data: { labels, datasets },
@@ -3400,12 +3529,11 @@ function buildStackedChart(canvas, points, opts) {
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       layout: { padding: { top: 22, right: 6 } },
-      datasets: { bar: { categoryPercentage: 0.65, barPercentage: 0.9, maxBarThickness: 36 } },
+      datasets: { bar: { categoryPercentage: 0.72, barPercentage: 0.88, maxBarThickness: 28 } },
       scales: {
         x: {
           stacked: true,
           ticks: {
-            // 月报最长 31 天，刻度上限对齐
             maxTicksLimit: 31,
             color: tc.muted,
             maxRotation: 45,
@@ -3420,17 +3548,42 @@ function buildStackedChart(canvas, points, opts) {
           beginAtZero: true,
           ticks: { color: tc.muted },
           grid: { color: tc.grid },
-          title: { display: true, text: "GB", color: tc.muted },
+          title: { display: true, text: "GB（入/出分柱 · VPS 堆叠）", color: tc.muted },
         },
       },
       plugins: {
-        legend: { labels: { color: tc.label } },
+        legend: {
+          labels: {
+            color: tc.label,
+            filter: legendFilter,
+            usePointStyle: true,
+            boxWidth: 10,
+          },
+        },
         title: { display: !!title, text: title, color: tc.text },
         tooltip: {
           callbacks: {
+            title: (items) => {
+              const lab = items && items[0] ? items[0].label : "";
+              return lab + "（左入站 / 右出站）";
+            },
+            label: (ctx) => {
+              const v = Number(ctx.parsed.y) || 0;
+              if (!(v > 0)) return null;
+              const ds = ctx.dataset || {};
+              const dir = ds._dir === "tx" ? "出" : (ds._dir === "rx" ? "入" : "");
+              const name = ds._mid || ds.label || "";
+              return (name ? name + " " : "") + (dir ? dir + " " : "") + v.toFixed(3) + " GB";
+            },
             footer: (items) => {
-              const sum = items.reduce((a, it) => a + (Number(it.parsed.y) || 0), 0);
-              return "合计 " + sum.toFixed(3) + " GB";
+              let rx = 0, tx = 0;
+              for (const it of items) {
+                const v = Number(it.parsed.y) || 0;
+                const ds = it.dataset || {};
+                if (ds.stack === "tx" || ds._dir === "tx") tx += v;
+                else rx += v;
+              }
+              return "入站合计 " + rx.toFixed(3) + " GB · 出站合计 " + tx.toFixed(3) + " GB";
             },
           },
         },
@@ -3480,7 +3633,7 @@ async function loadHistory() {
     const span = readSpan("range", chartMode);
     const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
     const data = await api(q);
-    mainPoints = (data && data.points) || [];
+    mainPoints = asChartData(data);
     await whenChartReady();
     renderMainChart();
     saveChartPrefs();
@@ -3518,7 +3671,7 @@ async function loadHistModal() {
     const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span)
       + "&mid=" + encodeURIComponent(histMid);
     const data = await api(q);
-    histPoints = (data && data.points) || [];
+    histPoints = asChartData(data);
     await whenChartReady();
     renderHistChart();
   } catch (e) {
@@ -3606,7 +3759,7 @@ async function refresh(opts = {}) {
       renderTable();
 
       if (wantHistory && histData) {
-        mainPoints = histData.points || [];
+        mainPoints = asChartData(histData);
         await whenChartReady();
         renderMainChart();
         saveChartPrefs();
@@ -3631,7 +3784,7 @@ async function loadHistory() {
     const span = readSpan("range", chartMode);
     const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
     const data = await api(q);
-    mainPoints = (data && data.points) || [];
+    mainPoints = asChartData(data);
     await whenChartReady();
     renderMainChart();
     saveChartPrefs();
@@ -3714,8 +3867,8 @@ function setTheme(id, opts) {
     el.classList.toggle("active", el.dataset.id === theme);
   });
   if (!opts || opts.redraw !== false) {
-    try { if (mainPoints && mainPoints.length) renderMainChart(); } catch {}
-    try { if (histPoints && histPoints.length) renderHistChart(); } catch {}
+    try { if (chartHasData(mainPoints)) renderMainChart(); } catch {}
+    try { if (chartHasData(histPoints)) renderHistChart(); } catch {}
   }
 }
 function renderThemeUI() {

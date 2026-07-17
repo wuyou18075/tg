@@ -2266,6 +2266,27 @@ textarea:focus{border-color:var(--accent)}
 .clock{font-variant-numeric:tabular-nums;font-size:12px;color:var(--label);padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel2);white-space:nowrap;user-select:none}
 .clock b{color:var(--text);font-weight:600;margin-left:4px}
 
+/* 看板双栏：排行 + 总统计 */
+.dash-grid{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(360px,1.2fr);gap:14px;margin-bottom:16px;align-items:stretch}
+@media (max-width:960px){.dash-grid{grid-template-columns:1fr}}
+.rank-panel .rank-wrap{height:auto;min-height:220px}
+.rank-panel .chart-wrap{height:auto;min-height:220px}
+/* 汇总卡片美化 */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 14px 12px;box-shadow:0 0 24px var(--glow);position:relative;overflow:hidden;transition:transform .15s,box-shadow .15s,border-color .15s}
+.card:hover{transform:translateY(-1px);border-color:var(--border);box-shadow:0 8px 24px var(--glow)}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.55}
+.card .label{font-size:12px;color:var(--muted);letter-spacing:.2px}
+.card .val{font-size:20px;font-weight:700;margin-top:6px;letter-spacing:.2px}
+.card .val.rx{color:var(--rx)}
+.card .val.tx{color:var(--tx)}
+.card .sub{font-size:11px;color:var(--muted);margin-top:6px}
+/* 面板轻微层次 */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:16px;box-shadow:0 0 20px var(--glow)}
+.panel h2{font-size:14px;margin:0 0 12px;color:var(--label);font-weight:600;letter-spacing:.2px}
+.chart-title-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.chart-title-row h2{margin:0}
+
 /* theme token: 原谅色（prairie）— 柔雾浅绿 + 图表冷暖对比 */
 html[data-theme="prairie"]{
   color-scheme:light;
@@ -3200,23 +3221,38 @@ textarea:focus{border-color:var(--accent)}
       <span id="tgSumStatus" class="muted" style="font-size:12px;margin-left:4px"></span>
     </div>
     <div class="cards" id="summary"></div>
-    <div class="panel" id="chartPanel">
-      <div class="chart-title-row">
-        <h2 id="chartPanelTitle">总流量统计</h2>
-      </div>
-      <div id="chartPanelBody">
-        <div class="chart-toolbar">
-          <div class="seg" id="modeSeg">
-            <button type="button" data-mode="hour" onclick="setChartMode('hour')">日内</button>
-            <button type="button" class="active" data-mode="week" onclick="setChartMode('week')">周报</button>
-            <button type="button" data-mode="month" onclick="setChartMode('month')">月报</button>
-            <button type="button" data-mode="year" onclick="setChartMode('year')">年报</button>
+
+    <div class="dash-grid">
+      <div class="panel rank-panel" id="rankPanel">
+        <div class="chart-title-row">
+          <h2>机器流量排行</h2>
+          <div class="seg" id="rankSeg">
+            <button type="button" class="active" data-rank="today" onclick="setRankMode('today')">今日</button>
+            <button type="button" data-rank="month" onclick="setRankMode('month')">本月</button>
           </div>
-          <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
-          <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
-          <select id="range" onchange="loadHistory()" title="选择统计跨度"></select>
         </div>
-        <div class="chart-wrap"><canvas id="chart"></canvas></div>
+        <div class="chart-wrap rank-wrap"><canvas id="rankChart"></canvas></div>
+        <div class="muted" style="font-size:11px;margin-top:6px">横向柱：每台机器入站/出站；按合计降序</div>
+      </div>
+
+      <div class="panel" id="chartPanel">
+        <div class="chart-title-row">
+          <h2 id="chartPanelTitle">总流量统计</h2>
+        </div>
+        <div id="chartPanelBody">
+          <div class="chart-toolbar">
+            <div class="seg" id="modeSeg">
+              <button type="button" data-mode="hour" onclick="setChartMode('hour')">日内</button>
+              <button type="button" class="active" data-mode="week" onclick="setChartMode('week')">周报</button>
+              <button type="button" data-mode="month" onclick="setChartMode('month')">月报</button>
+              <button type="button" data-mode="year" onclick="setChartMode('year')">年报</button>
+            </div>
+            <label class="chk"><input type="checkbox" id="chkRx" checked onchange="renderMainChart()"> 入站</label>
+            <label class="chk"><input type="checkbox" id="chkTx" checked onchange="renderMainChart()"> 出站</label>
+            <select id="range" onchange="loadHistory()" title="选择统计跨度"></select>
+          </div>
+          <div class="chart-wrap"><canvas id="chart"></canvas></div>
+        </div>
       </div>
     </div>
     <div class="panel">
@@ -3567,6 +3603,126 @@ const selectedMids = new Set();
 let listViewMode = "table"; // table | card
 let filterGroup = "";       // ""=全部, __none__=未分组, 其它=组名
 let histChart;
+let rankChart = null;
+let rankMode = "today"; // today | month
+
+function setRankMode(mode) {
+  rankMode = mode === "month" ? "month" : "today";
+  try { localStorage.setItem("dash_rank_mode", rankMode); } catch {}
+  document.querySelectorAll("#rankSeg button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.rank === rankMode);
+  });
+  renderRankChart();
+}
+
+/** 横向柱状图：各机器今日/本月 入出站排行 */
+function renderRankChart() {
+  const canvas = document.getElementById("rankChart");
+  if (!canvas || typeof Chart === "undefined") return;
+  const list = (machines || []).slice();
+  if (!list.length) {
+    if (rankChart) { try { rankChart.destroy(); } catch {} rankChart = null; }
+    return;
+  }
+  const mode = rankMode === "month" ? "month" : "today";
+  // 按合计降序
+  list.sort((a, b) => {
+    const ta = mode === "month"
+      ? ((a.month && a.month.rx) || 0) + ((a.month && a.month.tx) || 0)
+      : ((a.today && a.today.rx) || 0) + ((a.today && a.today.tx) || 0);
+    const tb = mode === "month"
+      ? ((b.month && b.month.rx) || 0) + ((b.month && b.month.tx) || 0)
+      : ((b.today && b.today.rx) || 0) + ((b.today && b.today.tx) || 0);
+    return tb - ta;
+  });
+  // 最多显示 12 台，避免过高
+  const top = list.slice(0, 12);
+  const labels = top.map((m) => m.machine_id || "?");
+  const rx = top.map((m) => {
+    const v = mode === "month" ? (m.month && m.month.rx) : (m.today && m.today.rx);
+    return (Number(v) || 0) / 1e9;
+  });
+  const tx = top.map((m) => {
+    const v = mode === "month" ? (m.month && m.month.tx) : (m.today && m.today.tx);
+    return (Number(v) || 0) / 1e9;
+  });
+  const tc = themeChartColors();
+  // 动态高度：每台约 36px
+  const h = Math.max(220, top.length * 36 + 48);
+  const wrap = canvas.parentElement;
+  if (wrap) wrap.style.height = h + "px";
+  canvas.style.height = h + "px";
+
+  if (rankChart) { try { rankChart.destroy(); } catch {} rankChart = null; }
+  rankChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "入站 GB",
+          data: rx,
+          backgroundColor: tc.rxSoft,
+          borderColor: tc.rx,
+          borderWidth: 1,
+          borderRadius: 4,
+          barPercentage: 0.75,
+          categoryPercentage: 0.7,
+        },
+        {
+          label: "出站 GB",
+          data: tx,
+          backgroundColor: tc.txSoft,
+          borderColor: tc.tx,
+          borderWidth: 1,
+          borderRadius: 4,
+          barPercentage: 0.75,
+          categoryPercentage: 0.7,
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      layout: { padding: { right: 28, top: 4, bottom: 4 } },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "end",
+          labels: { color: tc.label, boxWidth: 10, usePointStyle: true },
+        },
+        title: { display: false },
+        tooltip: {
+          callbacks: {
+            footer: (items) => {
+              const sum = items.reduce((a, it) => a + (Number(it.parsed.x) || 0), 0);
+              return "合计 " + sum.toFixed(3) + " GB";
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          stacked: false,
+          grid: { color: tc.grid },
+          ticks: { color: tc.muted },
+          title: { display: true, text: "GB", color: tc.muted },
+        },
+        y: {
+          grid: { display: false },
+          ticks: {
+            color: tc.text,
+            font: { size: 12, weight: "600" },
+            autoSkip: false,
+          },
+        },
+      },
+    },
+  });
+}
 let chartMode = "week";      // hour | week | month | year  （总览）
 let histMode = "week";       // hour | week | month | year  （单机弹窗）
 let mainPoints = [];         // 总览：points 或完整 {points,machines,series}
@@ -3731,6 +3887,8 @@ function renderSummary() {
     '<div class="card"><div class="label">今日出站</div><div class="val tx">' + gb(sum.today_tx) + "</div></div>",
     '<div class="card"><div class="label">本月出站</div><div class="val tx">' + gb(sum.month_tx) + "</div></div>",
   ].join("");
+  // 汇总刷新后同步横向排行
+  try { renderRankChart(); } catch {}
 }
 
 function onFilterSortChange() {
@@ -3762,6 +3920,12 @@ function restoreFilterSortPrefs() {
   } catch { /* ignore */ }
   applyListViewMode();
   fillGroupFilterOptions();
+  try {
+    rankMode = localStorage.getItem("dash_rank_mode") === "month" ? "month" : "today";
+    document.querySelectorAll("#rankSeg button").forEach((b) => {
+      b.classList.toggle("active", b.dataset.rank === rankMode);
+    });
+  } catch {}
 }
 function machineView() {
   let arr = machines.slice();
@@ -4937,6 +5101,7 @@ function setTheme(id, opts) {
   if (!opts || opts.redraw !== false) {
     try { if (chartHasData(mainPoints)) renderMainChart(); } catch {}
     try { if (chartHasData(histPoints)) renderHistChart(); } catch {}
+    try { renderRankChart(); } catch {}
   }
 }
 function renderThemeUI() {

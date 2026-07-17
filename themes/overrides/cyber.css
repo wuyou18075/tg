@@ -1,4 +1,56 @@
-/* overrides for theme: cyber */
-html[data-theme="cyber"] button.tg-btn{
-  background:linear-gradient(180deg,#22d3ee 0%,#06b6d4 100%);border-color:#0891b2;color:#041018;
+/* overrides: 书卷 / 旧书皮 */
+html[data-theme="cyber"] button.primary,
+html[data-theme="cyber"] .seg button.active{
+  background:#8b6914;border-color:#6f5310;color:#fffaf0;font-weight:700;box-shadow:none;
 }
+html[data-theme="cyber"] button.primary:hover{
+  background:#6f5310;border-color:#5a440c;color:#fffaf0;
+}
+html[data-theme="cyber"] button.green{
+  background:#4d7c4a;border-color:#6b9a66;color:#f4faf3;font-weight:700;
+}
+html[data-theme="cyber"] button.warn{
+  background:#b45309;border-color:#d97706;color:#fff7ed;font-weight:700;
+}
+html[data-theme="cyber"] button.danger{
+  background:#9f2a2a;border-color:#b91c1c;color:#fef2f2;font-weight:700;
+}
+html[data-theme="cyber"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
+html[data-theme="cyber"] select,
+html[data-theme="cyber"] .settings-form input,
+html[data-theme="cyber"] .settings-form select,
+html[data-theme="cyber"] .settings-form textarea,
+html[data-theme="cyber"] textarea,
+html[data-theme="cyber"] .seg button{
+  background:#efe4c8;border-color:#d0be90;color:var(--text);box-shadow:none;
+}
+html[data-theme="cyber"] .seg button.active{
+  background:#8b6914;border-color:#6f5310;color:#fffaf0;
+}
+html[data-theme="cyber"] header{
+  background:#f7f0de;border-bottom-color:#dfd0a8;
+}
+html[data-theme="cyber"] .card,
+html[data-theme="cyber"] .panel,
+html[data-theme="cyber"] .settings-card,
+html[data-theme="cyber"] .settings-shell,
+html[data-theme="cyber"] .modal{
+  background:#faf4e6;border-color:#dfd0a8;
+  box-shadow:0 6px 20px rgba(90,70,30,.08);
+}
+html[data-theme="cyber"] .status-pill.on{
+  color:#2f5a2c;background:#dcead6;border-color:#9bbf94;
+}
+html[data-theme="cyber"] .status-pill.off{
+  color:#7f1d1d;background:#f0d6d0;border-color:#d4a090;
+}
+html[data-theme="cyber"] button.tg-btn{
+  background:linear-gradient(180deg,#a67c1a 0%,#8b6914 100%);
+  border-color:#6f5310;color:#fffaf0;
+}
+html[data-theme="cyber"] button.tg-btn:hover{
+  background:#6f5310;border-color:#5a440c;
+}
+html[data-theme="cyber"] button.primary{color:#fffaf0}
+html[data-theme="cyber"] .nav a{color:var(--muted)}
+html[data-theme="cyber"] .nav a.active,html[data-theme="cyber"] .nav a:hover{color:var(--text);background:var(--hover)}

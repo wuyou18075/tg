@@ -2307,6 +2307,11 @@ td.clip-cell{max-width:12em}
 .m-bar-num.rx{color:var(--rx)}
 .m-bar-num.tx{color:var(--tx)}
 
+/* 机器列表标题行：标题左，分组筛选/新建右 */
+.list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.list-head h2{margin:0}
+.list-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+
 /* theme token: 原谅色（prairie）— 柔雾浅绿 + 图表冷暖对比 */
 html[data-theme="prairie"]{
   color-scheme:light;
@@ -2362,127 +2367,197 @@ html[data-theme="prairie"] button.tg-btn{
   --radius:12px; --radius-sm:8px;
 }
 
-/* theme token: 霓虹赛博（cyber） */
+/* theme token: 书卷（cyber id）— 旧书皮淡黄 / 羊皮纸 */
 html[data-theme="cyber"]{
-  --bg:#070b14; --bg2:#0a1020; --panel:#0d1528; --panel2:#08101c;
-  --line:#1c2d4d; --line2:#15233d; --border:#2a4570;
-  --text:#eaf6ff; --muted:#7fb0d8; --label:#9ec9ef;
-  --hover:#12203a; --accent:#22d3ee; --accent2:#06b6d4;
-  --ok:#10b981; --ok2:#059669; --warn:#f59e0b; --danger:#f43f5e; --danger2:#e11d48;
-  --badge-bg:#0e3a4a; --badge-fg:#67e8f9; --badge-off-bg:#4a1028; --badge-off-fg:#fda4af;
-  --rx:#22d3ee; --tx:#e879f9; --rx-soft:rgba(34,211,238,.88); --tx-soft:rgba(232,121,249,.88);
-  --rx-fill:rgba(34,211,238,.14); --tx-fill:rgba(232,121,249,.12);
-  --grid:#16304f; --glow:rgba(34,211,238,.22); --header-glow:linear-gradient(90deg,rgba(34,211,238,.08),rgba(232,121,249,.08));
+  color-scheme:light;
+  --bg:#f3ead4;
+  --bg2:#f7f0de;
+  --panel:#faf4e6;
+  --panel2:#efe4c8;
+  --line:#dfd0a8;
+  --line2:#e8dcb8;
+  --border:#d0be90;
+  --text:#3a3224;
+  --muted:#7a6d52;
+  --label:#5c513c;
+  --hover:#ebe0c0;
+  --accent:#8b6914;
+  --accent2:#6f5310;
+  --ok:#4d7c4a;
+  --ok2:#3f6b3c;
+  --warn:#b45309;
+  --danger:#9f2a2a;
+  --danger2:#7f1d1d;
+  --badge-bg:#e8d9a8;
+  --badge-fg:#5c4510;
+  --badge-off-bg:#f0d6d0;
+  --badge-off-fg:#7f1d1d;
+  --rx:#a67c1a;
+  --tx:#6b7c3a;
+  --rx-soft:rgba(166,124,26,.88);
+  --tx-soft:rgba(107,124,58,.88);
+  --rx-fill:rgba(166,124,26,.16);
+  --tx-fill:rgba(107,124,58,.14);
+  --grid:#e2d4aa;
+  --glow:rgba(139,105,20,.08);
+  --header-glow:linear-gradient(90deg,rgba(139,105,20,.08),rgba(180,150,80,.04),transparent 70%);
+  --body-bg:linear-gradient(180deg,#efe4c4 0%,#f5edd8 45%,#f3ead4 100%);
 }
 
-/* theme token: 墨夜（noir）— 哑光深灰黑 */
+/* overrides: 书卷 / 旧书皮 */
+html[data-theme="cyber"] button.primary,
+html[data-theme="cyber"] .seg button.active{
+  background:#8b6914;border-color:#6f5310;color:#fffaf0;font-weight:700;box-shadow:none;
+}
+html[data-theme="cyber"] button.primary:hover{
+  background:#6f5310;border-color:#5a440c;color:#fffaf0;
+}
+html[data-theme="cyber"] button.green{
+  background:#4d7c4a;border-color:#6b9a66;color:#f4faf3;font-weight:700;
+}
+html[data-theme="cyber"] button.warn{
+  background:#b45309;border-color:#d97706;color:#fff7ed;font-weight:700;
+}
+html[data-theme="cyber"] button.danger{
+  background:#9f2a2a;border-color:#b91c1c;color:#fef2f2;font-weight:700;
+}
+html[data-theme="cyber"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
+html[data-theme="cyber"] select,
+html[data-theme="cyber"] .settings-form input,
+html[data-theme="cyber"] .settings-form select,
+html[data-theme="cyber"] .settings-form textarea,
+html[data-theme="cyber"] textarea,
+html[data-theme="cyber"] .seg button{
+  background:#efe4c8;border-color:#d0be90;color:var(--text);box-shadow:none;
+}
+html[data-theme="cyber"] .seg button.active{
+  background:#8b6914;border-color:#6f5310;color:#fffaf0;
+}
+html[data-theme="cyber"] header{
+  background:#f7f0de;border-bottom-color:#dfd0a8;
+}
+html[data-theme="cyber"] .card,
+html[data-theme="cyber"] .panel,
+html[data-theme="cyber"] .settings-card,
+html[data-theme="cyber"] .settings-shell,
+html[data-theme="cyber"] .modal{
+  background:#faf4e6;border-color:#dfd0a8;
+  box-shadow:0 6px 20px rgba(90,70,30,.08);
+}
+html[data-theme="cyber"] .status-pill.on{
+  color:#2f5a2c;background:#dcead6;border-color:#9bbf94;
+}
+html[data-theme="cyber"] .status-pill.off{
+  color:#7f1d1d;background:#f0d6d0;border-color:#d4a090;
+}
+html[data-theme="cyber"] button.tg-btn{
+  background:linear-gradient(180deg,#a67c1a 0%,#8b6914 100%);
+  border-color:#6f5310;color:#fffaf0;
+}
+html[data-theme="cyber"] button.tg-btn:hover{
+  background:#6f5310;border-color:#5a440c;
+}
+html[data-theme="cyber"] button.primary{color:#fffaf0}
+html[data-theme="cyber"] .nav a{color:var(--muted)}
+html[data-theme="cyber"] .nav a.active,html[data-theme="cyber"] .nav a:hover{color:var(--text);background:var(--hover)}
+
+/* theme token: 墨夜（noir）— 流行暗色：锌灰底 + 柔靛蓝 */
 html[data-theme="noir"]{
   color-scheme:dark;
-  --bg:#050608; --bg2:#090b0f; --panel:#0c0e13; --panel2:#080a0e;
-  --line:#1a1e26; --line2:#14181f; --border:#252a34;
-  --text:#cfd5e0; --muted:#7f8796; --label:#9aa3b2;
-  --hover:#12161e; --accent:#3d8fb0; --accent2:#347a97;
-  --ok:#2aa878; --ok2:#228a68; --warn:#b8861a; --danger:#c45c5c; --danger2:#a84c4c;
-  --badge-bg:#121720; --badge-fg:#8ebfd4; --badge-off-bg:#281416; --badge-off-fg:#d09090;
-  --rx:#3d8fb0; --tx:#6b7ab8; --rx-soft:rgba(61,143,176,.85); --tx-soft:rgba(107,122,184,.82);
-  --rx-fill:rgba(61,143,176,.10); --tx-fill:rgba(107,122,184,.09);
-  --grid:#151922; --glow:transparent; --header-glow:none;
-  --body-bg:#050608;
+  --bg:#09090b;
+  --bg2:#0c0c0f;
+  --panel:#121216;
+  --panel2:#0e0e12;
+  --line:#23232b;
+  --line2:#1a1a21;
+  --border:#2e2e38;
+  --text:#ececf1;
+  --muted:#9898a6;
+  --label:#c4c4d0;
+  --hover:#1a1a22;
+  --accent:#818cf8;
+  --accent2:#6366f1;
+  --ok:#34d399;
+  --ok2:#10b981;
+  --warn:#fbbf24;
+  --danger:#f87171;
+  --danger2:#ef4444;
+  --badge-bg:#1e1b4b;
+  --badge-fg:#c7d2fe;
+  --badge-off-bg:#3f1515;
+  --badge-off-fg:#fca5a5;
+  --rx:#60a5fa;
+  --tx:#a78bfa;
+  --rx-soft:rgba(96,165,250,.88);
+  --tx-soft:rgba(167,139,250,.88);
+  --rx-fill:rgba(96,165,250,.14);
+  --tx-fill:rgba(167,139,250,.12);
+  --grid:#1c1c24;
+  --glow:rgba(129,140,248,.10);
+  --header-glow:linear-gradient(90deg,rgba(129,140,248,.08),transparent 65%);
+  --body-bg:radial-gradient(900px 480px at 0% 0%, rgba(99,102,241,.08), transparent 55%), #09090b;
 }
 
-/* overrides for theme: noir */
-
-/* 墨夜：哑光控件，无渐变高光 */
+/* overrides: 墨夜 — 哑光流行暗色 */
 html[data-theme="noir"] button.primary,
 html[data-theme="noir"] .seg button.active{
-  background:#2f6f8a;
-  border:1px solid #3d8fb0;
-  color:#e8f4fa;
-  font-weight:600;
+  background:#6366f1;
+  border:1px solid #818cf8;
+  color:#fff;
+  font-weight:700;
   box-shadow:none;
-  text-shadow:none;
-  filter:none;
 }
-
-html[data-theme="noir"] button.primary:hover{background:#3d8fb0;border-color:#4fa3c4;color:#f2f9fc}
-
-html[data-theme="noir"] button.green{background:#247a58;border-color:#2aa878;color:#e8faf2;font-weight:600;box-shadow:none}
-
-html[data-theme="noir"] button.warn{background:#8a6a14;border-color:#b8861a;color:#faf3e0;font-weight:600;box-shadow:none}
-
-html[data-theme="noir"] button.danger{background:#8f3f3f;border-color:#c45c5c;color:#faeaea;font-weight:600;box-shadow:none}
-
-html[data-theme="noir"] button:not(.primary):not(.green):not(.warn):not(.danger),
+html[data-theme="noir"] button.primary:hover{
+  background:#818cf8;border-color:#a5b4fc;color:#fff;
+}
+html[data-theme="noir"] button.green{
+  background:#059669;border-color:#34d399;color:#ecfdf5;font-weight:700;box-shadow:none;
+}
+html[data-theme="noir"] button.warn{
+  background:#d97706;border-color:#fbbf24;color:#1c1405;font-weight:700;box-shadow:none;
+}
+html[data-theme="noir"] button.danger{
+  background:#dc2626;border-color:#f87171;color:#fff;font-weight:700;box-shadow:none;
+}
+html[data-theme="noir"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
 html[data-theme="noir"] select,
 html[data-theme="noir"] .settings-form input,
 html[data-theme="noir"] .settings-form select,
 html[data-theme="noir"] .settings-form textarea,
 html[data-theme="noir"] textarea,
-html[data-theme="noir"] .seg button,
-html[data-theme="noir"] .section-note,
-html[data-theme="noir"] .tpl-help,
-html[data-theme="noir"] .tpl-preview,
-html[data-theme="noir"] .clock{
-  background:#0c0e13;
-  border-color:#252a34;
+html[data-theme="noir"] .seg button{
+  background:#121216;
+  border-color:#2e2e38;
   color:var(--text);
   box-shadow:none;
-  filter:none;
 }
-
-html[data-theme="noir"] .seg button.active{background:#2f6f8a;border-color:#3d8fb0;color:#e8f4fa}
-
-html[data-theme="noir"] header{background:#090b0f;border-bottom-color:#1a1e26;box-shadow:none}
-
-html[data-theme="noir"] .card .val{letter-spacing:.2px;text-shadow:none}
-
+html[data-theme="noir"] .seg button.active{
+  background:#6366f1;border-color:#818cf8;color:#fff;
+}
+html[data-theme="noir"] header{
+  background:#0c0c0f;border-bottom-color:#23232b;box-shadow:none;
+}
 html[data-theme="noir"] .card,
 html[data-theme="noir"] .panel,
 html[data-theme="noir"] .settings-card,
-html[data-theme="noir"] .modal,
-html[data-theme="noir"] .batch-bar{
-  box-shadow:none;
-  background:#0c0e13;
-  border-color:#1a1e26;
+html[data-theme="noir"] .settings-shell,
+html[data-theme="noir"] .modal{
+  background:#121216;
+  border-color:#23232b;
+  box-shadow:0 1px 0 rgba(255,255,255,.03),0 8px 22px rgba(0,0,0,.35);
 }
-
-html[data-theme="noir"] .theme-opt{
-  box-shadow:none;
-  background:#0a0c10;
-  border-color:#1c212b;
+html[data-theme="noir"] .status-pill.on{
+  color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.28);
 }
-
-html[data-theme="noir"] .theme-opt.active{
-  box-shadow:none;
-  border-color:#3d8fb0;
+html[data-theme="noir"] .status-pill.off{
+  color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(248,113,113,.28);
 }
-
-html[data-theme="noir"] .toast{
-  box-shadow:none;
-  background:#10141c;
-  border-color:#252a34;
-}
-
-html[data-theme="noir"] .status-pill.on{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.28)}
-
-html[data-theme="noir"] .status-pill.off{color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.28)}
-
-html[data-theme="noir"] #s_t_hour{
-  color:#e8edf5 !important;
-  background:#10141c !important;
-  border-color:#2a3140 !important;
-}
-
-html[data-theme="noir"] #s_t_hour option{
-  color:#0b1220 !important;
-  background:#fff !important;
-}
-
-/* TG 按钮：墨夜 */
 html[data-theme="noir"] button.tg-btn{
-  background:#2f6f8a;border-color:#3d8fb0;color:#e8f4fa;box-shadow:none;
+  background:#4f46e5;border-color:#6366f1;color:#fff;box-shadow:none;
 }
-html[data-theme="noir"] button.tg-btn:hover{background:#3d8fb0;border-color:#4fa3c4}
+html[data-theme="noir"] button.tg-btn:hover{
+  background:#6366f1;border-color:#818cf8;
+}
 
 /* theme token: 琉璃（glass）— 深空毛玻璃 */
 html[data-theme="glass"]{
@@ -2662,153 +2737,208 @@ html[data-theme="glass"] button.tg-btn{
 }
 html[data-theme="glass"] button.tg-btn:hover{background:rgba(125,211,252,.95)}
 
-/* theme token: 雾蓝白（paper）— 淡蓝浅色 */
+/* theme token: 淡雅紫（paper）— 淡紫雾感浅色 */
 html[data-theme="paper"]{
   color-scheme:light;
-  --bg:#e6eef8; --bg2:#edf3fb; --panel:#f3f7fc; --panel2:#e8eef8;
-  --line:#cfdced; --line2:#dbe5f2; --border:#bfcee4;
-  --text:#1e2a3a; --muted:#5b6b80; --label:#3f5168;
-  --hover:#d9e7f7; --accent:#3b82f6; --accent2:#2563eb;
-  --ok:#059669; --ok2:#047857; --warn:#d97706; --danger:#dc2626; --danger2:#b91c1c;
-  --badge-bg:#dbeafe; --badge-fg:#1d4ed8; --badge-off-bg:#fee2e2; --badge-off-fg:#b91c1c;
-  --rx:#3b82f6; --tx:#14b8a6; --rx-soft:rgba(59,130,246,.9); --tx-soft:rgba(20,184,166,.88);
-  --rx-fill:rgba(59,130,246,.12); --tx-fill:rgba(20,184,166,.12);
-  --grid:#d3e0ef; --glow:rgba(59,111,212,.08); --header-glow:linear-gradient(90deg,rgba(59,111,212,.06),transparent);
-  --body-bg:linear-gradient(180deg,#e3ecf7 0%,#eaf1f9 50%,#e6eef8 100%);
+  --bg:#f4f1f8;
+  --bg2:#f8f6fb;
+  --panel:#fbfafd;
+  --panel2:#f0ecf6;
+  --line:#e2dced;
+  --line2:#ebe6f2;
+  --border:#d4cce3;
+  --text:#2a2438;
+  --muted:#6f6680;
+  --label:#4a4260;
+  --hover:#ebe4f5;
+  --accent:#7c6bb5;
+  --accent2:#6554a0;
+  --ok:#0f766e;
+  --ok2:#0d9488;
+  --warn:#b45309;
+  --danger:#be123c;
+  --danger2:#9f1239;
+  --badge-bg:#e8e2f4;
+  --badge-fg:#4c3d7a;
+  --badge-off-bg:#f8e4e8;
+  --badge-off-fg:#9f1239;
+  --rx:#7c6bb5;
+  --tx:#0d9488;
+  --rx-soft:rgba(124,107,181,.88);
+  --tx-soft:rgba(13,148,136,.88);
+  --rx-fill:rgba(124,107,181,.14);
+  --tx-fill:rgba(13,148,136,.12);
+  --grid:#e5dff0;
+  --glow:rgba(124,107,181,.08);
+  --header-glow:linear-gradient(90deg,rgba(124,107,181,.07),transparent);
+  --body-bg:linear-gradient(180deg,#f1edf7 0%,#f6f3fa 50%,#f4f1f8 100%);
 }
 
-/* overrides for theme: paper */
-
-html[data-theme="paper"] body,
-html[data-theme="paper"]{/* soft paper */}
-
-html[data-theme="paper"] header{background:#eaf1f9;border-bottom-color:#cfdced}
-
-html[data-theme="paper"] .card,
-html[data-theme="paper"] .panel,
-html[data-theme="paper"] .settings-card{background:#f3f7fc;border-color:#cfdced}
-
+/* overrides: 淡雅紫 */
+html[data-theme="paper"] button.primary,
+html[data-theme="paper"] .seg button.active{
+  background:#7c6bb5;border-color:#6554a0;color:#fff;font-weight:700;box-shadow:none;
+}
+html[data-theme="paper"] button.primary:hover{
+  background:#6554a0;border-color:#514388;color:#fff;
+}
+html[data-theme="paper"] button.green{
+  background:#0f766e;border-color:#14b8a6;color:#fff;font-weight:700;
+}
+html[data-theme="paper"] button.warn{
+  background:#d97706;border-color:#f59e0b;color:#1c1405;font-weight:700;
+}
+html[data-theme="paper"] button.danger{
+  background:#be123c;border-color:#e11d48;color:#fff;font-weight:700;
+}
+html[data-theme="paper"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
 html[data-theme="paper"] select,
-html[data-theme="paper"] button:not(.primary):not(.green):not(.warn):not(.danger),
 html[data-theme="paper"] .settings-form input,
 html[data-theme="paper"] .settings-form select,
 html[data-theme="paper"] .settings-form textarea,
-html[data-theme="paper"] textarea{background:#e8eef8;border-color:#bfcee4;color:#1e2a3a}
-
-html[data-theme="paper"] .seg button{background:#e0e9f5;color:#3f5168;border-color:#bfcee4}
-
-html[data-theme="paper"] .seg button.active{background:#3b82f6;border-color:#2563eb;color:#fff;font-weight:700}
-
-/* 雾蓝白按钮：实心清晰，避免灰蓝发脏 */
-html[data-theme="paper"] button.primary{
-  background:#3b82f6; border:1px solid #2563eb; color:#ffffff; font-weight:700;
-  box-shadow:0 1px 2px rgba(37,99,235,.18);
+html[data-theme="paper"] textarea,
+html[data-theme="paper"] .seg button{
+  background:#f0ecf6;border-color:#d4cce3;color:var(--text);box-shadow:none;
 }
-
-html[data-theme="paper"] button.primary:hover{background:#2563eb;border-color:#1d4ed8;color:#fff}
-
-html[data-theme="paper"] button.green{
-  background:#10b981; border:1px solid #059669; color:#ffffff; font-weight:700;
+html[data-theme="paper"] .seg button.active{
+  background:#7c6bb5;border-color:#6554a0;color:#fff;
 }
-
-html[data-theme="paper"] button.green:hover{background:#059669;border-color:#047857}
-
-html[data-theme="paper"] button.warn{
-  background:#f59e0b; border:1px solid #d97706; color:#1f1403; font-weight:700;
+html[data-theme="paper"] header{
+  background:#f8f6fb;border-bottom-color:#e2dced;
 }
-
-html[data-theme="paper"] button.warn:hover{background:#d97706;border-color:#b45309;color:#fff}
-
-html[data-theme="paper"] button.danger{
-  background:#ef4444; border:1px solid #dc2626; color:#ffffff; font-weight:700;
-}
-
-html[data-theme="paper"] button.danger:hover{background:#dc2626;border-color:#b91c1c}
-
-html[data-theme="paper"] button.warn,
-html[data-theme="prairie"] button.warn{color:#111}
-
 html[data-theme="paper"] .card,
-html[data-theme="prairie"] .card,
 html[data-theme="paper"] .panel,
-html[data-theme="prairie"] .panel,
 html[data-theme="paper"] .settings-card,
-html[data-theme="prairie"] .settings-card{
-  box-shadow:0 8px 28px rgba(15,23,42,.06);
+html[data-theme="paper"] .settings-shell,
+html[data-theme="paper"] .modal{
+  background:#fbfafd;border-color:#e2dced;
+  box-shadow:0 8px 24px rgba(74,66,96,.06);
 }
-
-html[data-theme="paper"] .status-pill.on{color:#166534;background:#dcfce7;border-color:#86efac}
-
-html[data-theme="paper"] .status-pill.off{color:#991b1b;background:#fee2e2;border-color:#fca5a5}
-
-/* TG 按钮：雾蓝白 */
+html[data-theme="paper"] .status-pill.on{
+  color:#166534;background:#dcfce7;border-color:#86efac;
+}
+html[data-theme="paper"] .status-pill.off{
+  color:#9f1239;background:#fce7f0;border-color:#f9a8d4;
+}
 html[data-theme="paper"] button.tg-btn{
-  background:linear-gradient(180deg,#3b6fd4 0%,#2f5fbe 100%);border-color:#274f9e;color:#fff;
+  background:linear-gradient(180deg,#8b7bc4 0%,#7c6bb5 100%);
+  border-color:#6554a0;color:#fff;
 }
+html[data-theme="paper"] button.tg-btn:hover{
+  background:#6554a0;border-color:#514388;
+}
+html[data-theme="paper"] button.primary{color:#fff}
 
-/* theme token: 绛夜（crimson）— 深酒红暗珊瑚 */
+/* theme token: 绛夜（crimson）— 深酒红底 + 柔玫瑰强调，沉稳不脏粉 */
 html[data-theme="crimson"]{
   color-scheme:dark;
-  --bg:#12090b; --bg2:#1a0e11; --panel:#221316; --panel2:#180d10;
-  --line:#3a2228; --line2:#2c1a1f; --border:#4a2c34;
-  --text:#f3e8ea; --muted:#b79aa0; --label:#d8b8be;
-  --hover:#2b171c; --accent:#c45c6a; --accent2:#a84856;
-  --ok:#3fae7a; --ok2:#329265; --warn:#d4a017; --danger:#e06b6b; --danger2:#c95555;
-  --badge-bg:#3a1c24; --badge-fg:#f0c4cb; --badge-off-bg:#3a1518; --badge-off-fg:#f0a8a8;
-  --rx:#d47884; --tx:#c4a88c; --rx-soft:rgba(212,120,132,.9); --tx-soft:rgba(196,168,140,.88);
-  --rx-fill:rgba(212,120,132,.14); --tx-fill:rgba(196,168,140,.12);
-  --grid:#2c1a1f; --glow:rgba(196,92,106,.12); --header-glow:linear-gradient(90deg,rgba(196,92,106,.12),transparent 70%);
-  --body-bg:radial-gradient(800px 420px at 0% 0%, rgba(196,92,106,.10), transparent 55%), #12090b;
+  --bg:#0f0a0c;
+  --bg2:#161014;
+  --panel:#1c1418;
+  --panel2:#151014;
+  --line:#2e2328;
+  --line2:#241c21;
+  --border:#3d2f36;
+  --text:#f3ecee;
+  --muted:#a8989e;
+  --label:#d4c4c9;
+  --hover:#261c22;
+  --accent:#e11d48;
+  --accent2:#be123c;
+  --ok:#34d399;
+  --ok2:#10b981;
+  --warn:#f59e0b;
+  --danger:#fb7185;
+  --danger2:#f43f5e;
+  --badge-bg:#3f1d2a;
+  --badge-fg:#fecdd3;
+  --badge-off-bg:#3f1518;
+  --badge-off-fg:#fca5a5;
+  /* 入站玫红、出站琥珀金，对比清楚 */
+  --rx:#fb7185;
+  --tx:#fbbf24;
+  --rx-soft:rgba(251,113,133,.88);
+  --tx-soft:rgba(251,191,36,.88);
+  --rx-fill:rgba(251,113,133,.14);
+  --tx-fill:rgba(251,191,36,.12);
+  --grid:#2a2025;
+  --glow:rgba(225,29,72,.12);
+  --header-glow:linear-gradient(90deg,rgba(225,29,72,.10),rgba(251,191,36,.04),transparent 72%);
+  --body-bg:radial-gradient(900px 420px at 8% -8%, rgba(225,29,72,.14), transparent 55%),
+            radial-gradient(700px 360px at 100% 0%, rgba(127,29,63,.12), transparent 50%),
+            #0f0a0c;
 }
 
-/* overrides for theme: crimson */
-
+/* overrides for theme: crimson — 绛夜组件补丁 */
 html[data-theme="crimson"] button.primary,
 html[data-theme="crimson"] .seg button.active{
-  background:#c45c6a; border:1px solid #d47884; color:#1a080c; font-weight:700; box-shadow:none;
+  background:linear-gradient(180deg,#f43f5e 0%,#e11d48 100%);
+  border:1px solid #fb7185;
+  color:#fff;
+  font-weight:700;
+  box-shadow:0 2px 10px rgba(225,29,72,.28);
 }
-
-html[data-theme="crimson"] button.primary:hover{background:#d47884;border-color:#e8a0aa;color:#1a080c}
-
-html[data-theme="crimson"] button.green{background:#3fae7a;border-color:#5fc993;color:#041810;font-weight:700;box-shadow:none}
-
-html[data-theme="crimson"] button.warn{background:#d4a017;border-color:#e0b84a;color:#1a1203;font-weight:700;box-shadow:none}
-
-html[data-theme="crimson"] button.danger{background:#e06b6b;border-color:#f0a0a0;color:#1a0808;font-weight:700;box-shadow:none}
-
-html[data-theme="crimson"] button:not(.primary):not(.green):not(.warn):not(.danger),
+html[data-theme="crimson"] button.primary:hover{
+  background:linear-gradient(180deg,#fb7185 0%,#e11d48 100%);
+  border-color:#fecdd3;
+  color:#fff;
+}
+html[data-theme="crimson"] button.green{
+  background:#059669;border-color:#34d399;color:#ecfdf5;font-weight:700;box-shadow:none;
+}
+html[data-theme="crimson"] button.warn{
+  background:#d97706;border-color:#fbbf24;color:#1c1405;font-weight:700;box-shadow:none;
+}
+html[data-theme="crimson"] button.danger{
+  background:#be123c;border-color:#fb7185;color:#fff;font-weight:700;box-shadow:none;
+}
+html[data-theme="crimson"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
 html[data-theme="crimson"] select,
 html[data-theme="crimson"] .settings-form input,
 html[data-theme="crimson"] .settings-form select,
 html[data-theme="crimson"] .settings-form textarea,
 html[data-theme="crimson"] textarea,
 html[data-theme="crimson"] .seg button{
-  background:#1c1014; border-color:#4a2c34; color:var(--text); box-shadow:none;
+  background:#171116;
+  border-color:#3d2f36;
+  color:var(--text);
+  box-shadow:none;
 }
-
-html[data-theme="crimson"] .seg button.active{background:#c45c6a;border-color:#d47884;color:#1a080c}
-
-html[data-theme="crimson"] header{background:#1a0e11;border-bottom-color:#3a2228;box-shadow:none}
-
+html[data-theme="crimson"] .seg button.active{
+  background:linear-gradient(180deg,#f43f5e 0%,#e11d48 100%);
+  border-color:#fb7185;
+  color:#fff;
+}
+html[data-theme="crimson"] header{
+  background:#161014;
+  border-bottom-color:#2e2328;
+  box-shadow:none;
+}
 html[data-theme="crimson"] .card,
 html[data-theme="crimson"] .panel,
-html[data-theme="crimson"] .settings-card{
-  background:#221316; box-shadow:0 1px 0 rgba(255,255,255,.03),0 8px 22px rgba(0,0,0,.35);
+html[data-theme="crimson"] .settings-card,
+html[data-theme="crimson"] .settings-shell,
+html[data-theme="crimson"] .modal{
+  background:#1c1418;
+  border-color:#2e2328;
+  box-shadow:0 1px 0 rgba(255,255,255,.03),0 10px 28px rgba(0,0,0,.35);
 }
-
-html[data-theme="crimson"] .status-pill.on{color:#86efac;background:rgba(63,174,122,.14);border-color:rgba(63,174,122,.3)}
-
-html[data-theme="crimson"] .status-pill.off{color:#f0a8a8;background:rgba(224,107,107,.14);border-color:rgba(224,107,107,.3)}
-
+html[data-theme="crimson"] .status-pill.on{
+  color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.3);
+}
+html[data-theme="crimson"] .status-pill.off{
+  color:#fecdd3;background:rgba(244,63,94,.14);border-color:rgba(251,113,133,.3);
+}
 /* TG 按钮：绛夜 */
 html[data-theme="crimson"] button.tg-btn{
-  background:linear-gradient(180deg,#c45c6a 0%,#a84856 100%);border-color:#8f3a48;color:#fff;
-  box-shadow:0 2px 8px rgba(168,72,86,.3);
+  background:linear-gradient(180deg,#f43f5e 0%,#be123c 100%);
+  border-color:#9f1239;
+  color:#fff;
+  box-shadow:0 2px 10px rgba(190,18,60,.32);
 }
-
-/* overrides for theme: cyber */
-html[data-theme="cyber"] button.tg-btn{
-  background:linear-gradient(180deg,#22d3ee 0%,#06b6d4 100%);border-color:#0891b2;color:#041018;
+html[data-theme="crimson"] button.tg-btn:hover{
+  background:linear-gradient(180deg,#fb7185 0%,#e11d48 100%);
+  border-color:#fecdd3;
 }
 
 /* theme picker swatches */
@@ -3177,12 +3307,12 @@ textarea:focus{border-color:var(--accent)}
 .theme-opt .name{font-size:12px;font-weight:600;color:var(--text)}
 .theme-opt .desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
 .theme-opt[data-id="default"]{--sw1:#0b1220;--sw2:#3b82f6;--sw3:#34d399}
-.theme-opt[data-id="cyber"]{--sw1:#070b14;--sw2:#22d3ee;--sw3:#e879f9}
-.theme-opt[data-id="noir"]{--sw1:#050608;--sw2:#3d8fb0;--sw3:#1a1e26}
+.theme-opt[data-id="cyber"]{--sw1:#f3ead4;--sw2:#8b6914;--sw3:#6b7c3a}
+.theme-opt[data-id="noir"]{--sw1:#09090b;--sw2:#818cf8;--sw3:#23232b}
 .theme-opt[data-id="glass"]{--sw1:#0a1024;--sw2:#7dd3fc;--sw3:#a5b4fc}
-.theme-opt[data-id="paper"]{--sw1:#e6eef8;--sw2:#3b82f6;--sw3:#14b8a6}
+.theme-opt[data-id="paper"]{--sw1:#f4f1f8;--sw2:#7c6bb5;--sw3:#0d9488}
 .theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#2563eb;--sw3:#d97706}
-.theme-opt[data-id="crimson"]{--sw1:#12090b;--sw2:#c45c6a;--sw3:#4a2c34}
+.theme-opt[data-id="crimson"]{--sw1:#0f0a0c;--sw2:#e11d48;--sw3:#fbbf24}
 
 
 /* @@THEMES_BUNDLE_END@@ */
@@ -3225,10 +3355,6 @@ textarea:focus{border-color:var(--accent)}
       <label class="chk" title="勾选：页面显示入站+出站；取消：页面只显示出站（TG 汇报仍含入出站）">
         <input type="checkbox" id="chkShowRx" checked onchange="setShowInbound(this.checked)"> 入站统计
       </label>
-      <select id="filterGroup" onchange="onFilterSortChange()" title="按分组筛选" style="width:auto;min-width:110px">
-        <option value="">全部分组</option>
-        <option value="__none__">未分组</option>
-      </select>
       <select id="sortBy" onchange="onFilterSortChange()" title="排序（会记住选择）">
         <option value="last">默认（最后上报）</option>
         <option value="today_desc">今日流量 ↓</option>
@@ -3240,7 +3366,6 @@ textarea:focus{border-color:var(--accent)}
         <button type="button" class="active" data-view="table" onclick="setListViewMode('table')">列表</button>
         <button type="button" data-view="card" onclick="setListViewMode('card')">卡片</button>
       </div>
-      <button type="button" onclick="createGroupPrompt()">新建分组</button>
       <span id="tgStatus" class="tg-pill s-not_configured" title="点击重新检测" onclick="loadTgStatus(true)">
         <span class="dot"></span><span id="tgStatusText">TG: 检测中</span>
       </span>
@@ -3283,7 +3408,16 @@ textarea:focus{border-color:var(--accent)}
       </div>
     </div>
     <div class="panel">
-      <h2>机器列表</h2>
+      <div class="list-head">
+        <h2>机器列表</h2>
+        <div class="list-head-actions">
+          <select id="filterGroup" onchange="onFilterSortChange()" title="按分组筛选" style="width:auto;min-width:120px">
+            <option value="">全部分组</option>
+            <option value="__none__">未分组</option>
+          </select>
+          <button type="button" onclick="createGroupPrompt()">新建分组</button>
+        </div>
+      </div>
       <div class="batch-bar" id="batchBar">
         <span>已选 <b id="batchCount">0</b> 台</span>
         <button class="warn" onclick="batchAction('include_tg')">加入 TG 汇报</button>
@@ -3359,7 +3493,7 @@ textarea:focus{border-color:var(--accent)}
               <h3>2. 界面主题</h3>
               <span class="tag">本地记忆</span>
             </div>
-            <p class="sec-desc">默认主题为「原谅色」。另有极夜蓝、霓虹赛博、墨夜、琉璃、雾蓝白、绛夜。选择后立即生效，保存在本机浏览器。</p>
+            <p class="sec-desc">默认主题为「原谅色」。另有极夜蓝、书卷、墨夜、琉璃、淡雅紫、绛夜。选择后立即生效，保存在本机浏览器。</p>
             <div class="theme-grid" id="themeGrid"></div>
           </section>
 
@@ -4145,8 +4279,9 @@ function makeStatusPill(m) {
   return badge;
 }
 
-function makeOpsButtons(m) {
+function makeOpsButtons(m, opts) {
   const wrap = document.createElement("div");
+  const withGroup = !opts || opts.group !== false;
   const mk = (text, cls, fn) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -4157,7 +4292,8 @@ function makeOpsButtons(m) {
   };
   wrap.appendChild(mk("流量统计", "sm green", () => openHistModal(m.machine_id)));
   wrap.appendChild(mk("更新注册", "sm primary", () => openUpdateVps(m.machine_id)));
-  wrap.appendChild(mk("分组", "sm", () => setOneMachineGroup(m.machine_id)));
+  // 卡片模式不显示「分组」：用批量勾选 + 移入分组
+  if (withGroup) wrap.appendChild(mk("分组", "sm", () => setOneMachineGroup(m.machine_id)));
   wrap.appendChild(mk("删除", "sm danger", () => deleteMachineRow(m.machine_id)));
   return wrap;
 }
@@ -4365,24 +4501,7 @@ function renderCardList() {
     card.appendChild(meta);
 
     const uptime = (m.online_sec_live != null) ? m.online_sec_live : (Number(m.online_sec) || 0);
-    const stats = document.createElement("div");
-    stats.className = "m-card-stats";
-    const cells = [];
-    if (showInbound()) {
-      cells.push(["今日入站", gb(m.today && m.today.rx), "rx"]);
-      cells.push(["本月入站", gb(m.month && m.month.rx), "rx"]);
-    }
-    cells.push(["今日出站", gb(m.today && m.today.tx), "tx"]);
-    cells.push(["本月出站", gb(m.month && m.month.tx), "tx"]);
-    for (const [k, v, cls] of cells) {
-      const st = document.createElement("div");
-      st.className = "st";
-      const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k;
-      const vv = document.createElement("div"); vv.className = "v " + cls; vv.textContent = v;
-      st.appendChild(kk); st.appendChild(vv);
-      stats.appendChild(st);
-    }
-    card.appendChild(stats);
+    // 卡片不再显示「今日出站/本月出站」数字格，流量看下方横向条
 
     // 卡片内横向流量条（每台独立；宽度相对当前列表最大值）
     const bars = document.createElement("div");
@@ -4414,7 +4533,8 @@ function renderCardList() {
     timeLine.title = tstr;
     card.appendChild(timeLine);
 
-    const ops = makeOpsButtons(m);
+    // 卡片不显示「分组」按钮：用勾选 + 批量移入分组
+    const ops = makeOpsButtons(m, { group: false });
     ops.className = "m-card-ops";
     card.appendChild(ops);
 
@@ -5406,13 +5526,13 @@ const THEMES = [
   },
   {
     "id": "cyber",
-    "name": "霓虹赛博",
-    "desc": "青粉霓虹电光"
+    "name": "书卷",
+    "desc": "旧书皮淡黄 · 羊皮纸"
   },
   {
     "id": "noir",
     "name": "墨夜",
-    "desc": "极哑光深灰黑"
+    "desc": "流行暗色 · 锌灰靛蓝"
   },
   {
     "id": "glass",
@@ -5421,13 +5541,13 @@ const THEMES = [
   },
   {
     "id": "paper",
-    "name": "雾蓝白",
-    "desc": "淡蓝纸感浅色"
+    "name": "淡雅紫",
+    "desc": "淡紫雾感浅色"
   },
   {
     "id": "crimson",
     "name": "绛夜",
-    "desc": "深酒红暗珊瑚"
+    "desc": "深酒红 + 玫红琥珀"
   }
 ];
 const THEME_ALIAS = {

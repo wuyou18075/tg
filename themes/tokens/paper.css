@@ -1,14 +1,36 @@
-/* theme token: 雾蓝白（paper）— 淡蓝浅色 */
+/* theme token: 淡雅紫（paper）— 淡紫雾感浅色 */
 html[data-theme="paper"]{
   color-scheme:light;
-  --bg:#e6eef8; --bg2:#edf3fb; --panel:#f3f7fc; --panel2:#e8eef8;
-  --line:#cfdced; --line2:#dbe5f2; --border:#bfcee4;
-  --text:#1e2a3a; --muted:#5b6b80; --label:#3f5168;
-  --hover:#d9e7f7; --accent:#3b82f6; --accent2:#2563eb;
-  --ok:#059669; --ok2:#047857; --warn:#d97706; --danger:#dc2626; --danger2:#b91c1c;
-  --badge-bg:#dbeafe; --badge-fg:#1d4ed8; --badge-off-bg:#fee2e2; --badge-off-fg:#b91c1c;
-  --rx:#3b82f6; --tx:#14b8a6; --rx-soft:rgba(59,130,246,.9); --tx-soft:rgba(20,184,166,.88);
-  --rx-fill:rgba(59,130,246,.12); --tx-fill:rgba(20,184,166,.12);
-  --grid:#d3e0ef; --glow:rgba(59,111,212,.08); --header-glow:linear-gradient(90deg,rgba(59,111,212,.06),transparent);
-  --body-bg:linear-gradient(180deg,#e3ecf7 0%,#eaf1f9 50%,#e6eef8 100%);
+  --bg:#f4f1f8;
+  --bg2:#f8f6fb;
+  --panel:#fbfafd;
+  --panel2:#f0ecf6;
+  --line:#e2dced;
+  --line2:#ebe6f2;
+  --border:#d4cce3;
+  --text:#2a2438;
+  --muted:#6f6680;
+  --label:#4a4260;
+  --hover:#ebe4f5;
+  --accent:#7c6bb5;
+  --accent2:#6554a0;
+  --ok:#0f766e;
+  --ok2:#0d9488;
+  --warn:#b45309;
+  --danger:#be123c;
+  --danger2:#9f1239;
+  --badge-bg:#e8e2f4;
+  --badge-fg:#4c3d7a;
+  --badge-off-bg:#f8e4e8;
+  --badge-off-fg:#9f1239;
+  --rx:#7c6bb5;
+  --tx:#0d9488;
+  --rx-soft:rgba(124,107,181,.88);
+  --tx-soft:rgba(13,148,136,.88);
+  --rx-fill:rgba(124,107,181,.14);
+  --tx-fill:rgba(13,148,136,.12);
+  --grid:#e5dff0;
+  --glow:rgba(124,107,181,.08);
+  --header-glow:linear-gradient(90deg,rgba(124,107,181,.07),transparent);
+  --body-bg:linear-gradient(180deg,#f1edf7 0%,#f6f3fa 50%,#f4f1f8 100%);
 }

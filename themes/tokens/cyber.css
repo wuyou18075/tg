@@ -1,12 +1,36 @@
-/* theme token: 霓虹赛博（cyber） */
+/* theme token: 书卷（cyber id）— 旧书皮淡黄 / 羊皮纸 */
 html[data-theme="cyber"]{
-  --bg:#070b14; --bg2:#0a1020; --panel:#0d1528; --panel2:#08101c;
-  --line:#1c2d4d; --line2:#15233d; --border:#2a4570;
-  --text:#eaf6ff; --muted:#7fb0d8; --label:#9ec9ef;
-  --hover:#12203a; --accent:#22d3ee; --accent2:#06b6d4;
-  --ok:#10b981; --ok2:#059669; --warn:#f59e0b; --danger:#f43f5e; --danger2:#e11d48;
-  --badge-bg:#0e3a4a; --badge-fg:#67e8f9; --badge-off-bg:#4a1028; --badge-off-fg:#fda4af;
-  --rx:#22d3ee; --tx:#e879f9; --rx-soft:rgba(34,211,238,.88); --tx-soft:rgba(232,121,249,.88);
-  --rx-fill:rgba(34,211,238,.14); --tx-fill:rgba(232,121,249,.12);
-  --grid:#16304f; --glow:rgba(34,211,238,.22); --header-glow:linear-gradient(90deg,rgba(34,211,238,.08),rgba(232,121,249,.08));
+  color-scheme:light;
+  --bg:#f3ead4;
+  --bg2:#f7f0de;
+  --panel:#faf4e6;
+  --panel2:#efe4c8;
+  --line:#dfd0a8;
+  --line2:#e8dcb8;
+  --border:#d0be90;
+  --text:#3a3224;
+  --muted:#7a6d52;
+  --label:#5c513c;
+  --hover:#ebe0c0;
+  --accent:#8b6914;
+  --accent2:#6f5310;
+  --ok:#4d7c4a;
+  --ok2:#3f6b3c;
+  --warn:#b45309;
+  --danger:#9f2a2a;
+  --danger2:#7f1d1d;
+  --badge-bg:#e8d9a8;
+  --badge-fg:#5c4510;
+  --badge-off-bg:#f0d6d0;
+  --badge-off-fg:#7f1d1d;
+  --rx:#a67c1a;
+  --tx:#6b7c3a;
+  --rx-soft:rgba(166,124,26,.88);
+  --tx-soft:rgba(107,124,58,.88);
+  --rx-fill:rgba(166,124,26,.16);
+  --tx-fill:rgba(107,124,58,.14);
+  --grid:#e2d4aa;
+  --glow:rgba(139,105,20,.08);
+  --header-glow:linear-gradient(90deg,rgba(139,105,20,.08),rgba(180,150,80,.04),transparent 70%);
+  --body-bg:linear-gradient(180deg,#efe4c4 0%,#f5edd8 45%,#f3ead4 100%);
 }

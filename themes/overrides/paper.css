@@ -1,68 +1,54 @@
-/* overrides for theme: paper */
-
-html[data-theme="paper"] body,
-html[data-theme="paper"]{/* soft paper */}
-
-html[data-theme="paper"] header{background:#eaf1f9;border-bottom-color:#cfdced}
-
-html[data-theme="paper"] .card,
-html[data-theme="paper"] .panel,
-html[data-theme="paper"] .settings-card{background:#f3f7fc;border-color:#cfdced}
-
+/* overrides: 淡雅紫 */
+html[data-theme="paper"] button.primary,
+html[data-theme="paper"] .seg button.active{
+  background:#7c6bb5;border-color:#6554a0;color:#fff;font-weight:700;box-shadow:none;
+}
+html[data-theme="paper"] button.primary:hover{
+  background:#6554a0;border-color:#514388;color:#fff;
+}
+html[data-theme="paper"] button.green{
+  background:#0f766e;border-color:#14b8a6;color:#fff;font-weight:700;
+}
+html[data-theme="paper"] button.warn{
+  background:#d97706;border-color:#f59e0b;color:#1c1405;font-weight:700;
+}
+html[data-theme="paper"] button.danger{
+  background:#be123c;border-color:#e11d48;color:#fff;font-weight:700;
+}
+html[data-theme="paper"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
 html[data-theme="paper"] select,
-html[data-theme="paper"] button:not(.primary):not(.green):not(.warn):not(.danger),
 html[data-theme="paper"] .settings-form input,
 html[data-theme="paper"] .settings-form select,
 html[data-theme="paper"] .settings-form textarea,
-html[data-theme="paper"] textarea{background:#e8eef8;border-color:#bfcee4;color:#1e2a3a}
-
-html[data-theme="paper"] .seg button{background:#e0e9f5;color:#3f5168;border-color:#bfcee4}
-
-html[data-theme="paper"] .seg button.active{background:#3b82f6;border-color:#2563eb;color:#fff;font-weight:700}
-
-/* 雾蓝白按钮：实心清晰，避免灰蓝发脏 */
-html[data-theme="paper"] button.primary{
-  background:#3b82f6; border:1px solid #2563eb; color:#ffffff; font-weight:700;
-  box-shadow:0 1px 2px rgba(37,99,235,.18);
+html[data-theme="paper"] textarea,
+html[data-theme="paper"] .seg button{
+  background:#f0ecf6;border-color:#d4cce3;color:var(--text);box-shadow:none;
 }
-
-html[data-theme="paper"] button.primary:hover{background:#2563eb;border-color:#1d4ed8;color:#fff}
-
-html[data-theme="paper"] button.green{
-  background:#10b981; border:1px solid #059669; color:#ffffff; font-weight:700;
+html[data-theme="paper"] .seg button.active{
+  background:#7c6bb5;border-color:#6554a0;color:#fff;
 }
-
-html[data-theme="paper"] button.green:hover{background:#059669;border-color:#047857}
-
-html[data-theme="paper"] button.warn{
-  background:#f59e0b; border:1px solid #d97706; color:#1f1403; font-weight:700;
+html[data-theme="paper"] header{
+  background:#f8f6fb;border-bottom-color:#e2dced;
 }
-
-html[data-theme="paper"] button.warn:hover{background:#d97706;border-color:#b45309;color:#fff}
-
-html[data-theme="paper"] button.danger{
-  background:#ef4444; border:1px solid #dc2626; color:#ffffff; font-weight:700;
-}
-
-html[data-theme="paper"] button.danger:hover{background:#dc2626;border-color:#b91c1c}
-
-html[data-theme="paper"] button.warn,
-html[data-theme="prairie"] button.warn{color:#111}
-
 html[data-theme="paper"] .card,
-html[data-theme="prairie"] .card,
 html[data-theme="paper"] .panel,
-html[data-theme="prairie"] .panel,
 html[data-theme="paper"] .settings-card,
-html[data-theme="prairie"] .settings-card{
-  box-shadow:0 8px 28px rgba(15,23,42,.06);
+html[data-theme="paper"] .settings-shell,
+html[data-theme="paper"] .modal{
+  background:#fbfafd;border-color:#e2dced;
+  box-shadow:0 8px 24px rgba(74,66,96,.06);
 }
-
-html[data-theme="paper"] .status-pill.on{color:#166534;background:#dcfce7;border-color:#86efac}
-
-html[data-theme="paper"] .status-pill.off{color:#991b1b;background:#fee2e2;border-color:#fca5a5}
-
-/* TG 按钮：雾蓝白 */
+html[data-theme="paper"] .status-pill.on{
+  color:#166534;background:#dcfce7;border-color:#86efac;
+}
+html[data-theme="paper"] .status-pill.off{
+  color:#9f1239;background:#fce7f0;border-color:#f9a8d4;
+}
 html[data-theme="paper"] button.tg-btn{
-  background:linear-gradient(180deg,#3b6fd4 0%,#2f5fbe 100%);border-color:#274f9e;color:#fff;
+  background:linear-gradient(180deg,#8b7bc4 0%,#7c6bb5 100%);
+  border-color:#6554a0;color:#fff;
 }
+html[data-theme="paper"] button.tg-btn:hover{
+  background:#6554a0;border-color:#514388;
+}
+html[data-theme="paper"] button.primary{color:#fff}

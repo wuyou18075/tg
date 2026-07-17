@@ -1,44 +1,71 @@
-/* overrides for theme: crimson */
-
+/* overrides for theme: crimson — 绛夜组件补丁 */
 html[data-theme="crimson"] button.primary,
 html[data-theme="crimson"] .seg button.active{
-  background:#c45c6a; border:1px solid #d47884; color:#1a080c; font-weight:700; box-shadow:none;
+  background:linear-gradient(180deg,#f43f5e 0%,#e11d48 100%);
+  border:1px solid #fb7185;
+  color:#fff;
+  font-weight:700;
+  box-shadow:0 2px 10px rgba(225,29,72,.28);
 }
-
-html[data-theme="crimson"] button.primary:hover{background:#d47884;border-color:#e8a0aa;color:#1a080c}
-
-html[data-theme="crimson"] button.green{background:#3fae7a;border-color:#5fc993;color:#041810;font-weight:700;box-shadow:none}
-
-html[data-theme="crimson"] button.warn{background:#d4a017;border-color:#e0b84a;color:#1a1203;font-weight:700;box-shadow:none}
-
-html[data-theme="crimson"] button.danger{background:#e06b6b;border-color:#f0a0a0;color:#1a0808;font-weight:700;box-shadow:none}
-
-html[data-theme="crimson"] button:not(.primary):not(.green):not(.warn):not(.danger),
+html[data-theme="crimson"] button.primary:hover{
+  background:linear-gradient(180deg,#fb7185 0%,#e11d48 100%);
+  border-color:#fecdd3;
+  color:#fff;
+}
+html[data-theme="crimson"] button.green{
+  background:#059669;border-color:#34d399;color:#ecfdf5;font-weight:700;box-shadow:none;
+}
+html[data-theme="crimson"] button.warn{
+  background:#d97706;border-color:#fbbf24;color:#1c1405;font-weight:700;box-shadow:none;
+}
+html[data-theme="crimson"] button.danger{
+  background:#be123c;border-color:#fb7185;color:#fff;font-weight:700;box-shadow:none;
+}
+html[data-theme="crimson"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
 html[data-theme="crimson"] select,
 html[data-theme="crimson"] .settings-form input,
 html[data-theme="crimson"] .settings-form select,
 html[data-theme="crimson"] .settings-form textarea,
 html[data-theme="crimson"] textarea,
 html[data-theme="crimson"] .seg button{
-  background:#1c1014; border-color:#4a2c34; color:var(--text); box-shadow:none;
+  background:#171116;
+  border-color:#3d2f36;
+  color:var(--text);
+  box-shadow:none;
 }
-
-html[data-theme="crimson"] .seg button.active{background:#c45c6a;border-color:#d47884;color:#1a080c}
-
-html[data-theme="crimson"] header{background:#1a0e11;border-bottom-color:#3a2228;box-shadow:none}
-
+html[data-theme="crimson"] .seg button.active{
+  background:linear-gradient(180deg,#f43f5e 0%,#e11d48 100%);
+  border-color:#fb7185;
+  color:#fff;
+}
+html[data-theme="crimson"] header{
+  background:#161014;
+  border-bottom-color:#2e2328;
+  box-shadow:none;
+}
 html[data-theme="crimson"] .card,
 html[data-theme="crimson"] .panel,
-html[data-theme="crimson"] .settings-card{
-  background:#221316; box-shadow:0 1px 0 rgba(255,255,255,.03),0 8px 22px rgba(0,0,0,.35);
+html[data-theme="crimson"] .settings-card,
+html[data-theme="crimson"] .settings-shell,
+html[data-theme="crimson"] .modal{
+  background:#1c1418;
+  border-color:#2e2328;
+  box-shadow:0 1px 0 rgba(255,255,255,.03),0 10px 28px rgba(0,0,0,.35);
 }
-
-html[data-theme="crimson"] .status-pill.on{color:#86efac;background:rgba(63,174,122,.14);border-color:rgba(63,174,122,.3)}
-
-html[data-theme="crimson"] .status-pill.off{color:#f0a8a8;background:rgba(224,107,107,.14);border-color:rgba(224,107,107,.3)}
-
+html[data-theme="crimson"] .status-pill.on{
+  color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.3);
+}
+html[data-theme="crimson"] .status-pill.off{
+  color:#fecdd3;background:rgba(244,63,94,.14);border-color:rgba(251,113,133,.3);
+}
 /* TG 按钮：绛夜 */
 html[data-theme="crimson"] button.tg-btn{
-  background:linear-gradient(180deg,#c45c6a 0%,#a84856 100%);border-color:#8f3a48;color:#fff;
-  box-shadow:0 2px 8px rgba(168,72,86,.3);
+  background:linear-gradient(180deg,#f43f5e 0%,#be123c 100%);
+  border-color:#9f1239;
+  color:#fff;
+  box-shadow:0 2px 10px rgba(190,18,60,.32);
+}
+html[data-theme="crimson"] button.tg-btn:hover{
+  background:linear-gradient(180deg,#fb7185 0%,#e11d48 100%);
+  border-color:#fecdd3;
 }

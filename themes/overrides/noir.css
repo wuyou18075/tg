@@ -1,93 +1,60 @@
-/* overrides for theme: noir */
-
-/* 墨夜：哑光控件，无渐变高光 */
+/* overrides: 墨夜 — 哑光流行暗色 */
 html[data-theme="noir"] button.primary,
 html[data-theme="noir"] .seg button.active{
-  background:#2f6f8a;
-  border:1px solid #3d8fb0;
-  color:#e8f4fa;
-  font-weight:600;
+  background:#6366f1;
+  border:1px solid #818cf8;
+  color:#fff;
+  font-weight:700;
   box-shadow:none;
-  text-shadow:none;
-  filter:none;
 }
-
-html[data-theme="noir"] button.primary:hover{background:#3d8fb0;border-color:#4fa3c4;color:#f2f9fc}
-
-html[data-theme="noir"] button.green{background:#247a58;border-color:#2aa878;color:#e8faf2;font-weight:600;box-shadow:none}
-
-html[data-theme="noir"] button.warn{background:#8a6a14;border-color:#b8861a;color:#faf3e0;font-weight:600;box-shadow:none}
-
-html[data-theme="noir"] button.danger{background:#8f3f3f;border-color:#c45c5c;color:#faeaea;font-weight:600;box-shadow:none}
-
-html[data-theme="noir"] button:not(.primary):not(.green):not(.warn):not(.danger),
+html[data-theme="noir"] button.primary:hover{
+  background:#818cf8;border-color:#a5b4fc;color:#fff;
+}
+html[data-theme="noir"] button.green{
+  background:#059669;border-color:#34d399;color:#ecfdf5;font-weight:700;box-shadow:none;
+}
+html[data-theme="noir"] button.warn{
+  background:#d97706;border-color:#fbbf24;color:#1c1405;font-weight:700;box-shadow:none;
+}
+html[data-theme="noir"] button.danger{
+  background:#dc2626;border-color:#f87171;color:#fff;font-weight:700;box-shadow:none;
+}
+html[data-theme="noir"] button:not(.primary):not(.green):not(.warn):not(.danger):not(.tg-btn),
 html[data-theme="noir"] select,
 html[data-theme="noir"] .settings-form input,
 html[data-theme="noir"] .settings-form select,
 html[data-theme="noir"] .settings-form textarea,
 html[data-theme="noir"] textarea,
-html[data-theme="noir"] .seg button,
-html[data-theme="noir"] .section-note,
-html[data-theme="noir"] .tpl-help,
-html[data-theme="noir"] .tpl-preview,
-html[data-theme="noir"] .clock{
-  background:#0c0e13;
-  border-color:#252a34;
+html[data-theme="noir"] .seg button{
+  background:#121216;
+  border-color:#2e2e38;
   color:var(--text);
   box-shadow:none;
-  filter:none;
 }
-
-html[data-theme="noir"] .seg button.active{background:#2f6f8a;border-color:#3d8fb0;color:#e8f4fa}
-
-html[data-theme="noir"] header{background:#090b0f;border-bottom-color:#1a1e26;box-shadow:none}
-
-html[data-theme="noir"] .card .val{letter-spacing:.2px;text-shadow:none}
-
+html[data-theme="noir"] .seg button.active{
+  background:#6366f1;border-color:#818cf8;color:#fff;
+}
+html[data-theme="noir"] header{
+  background:#0c0c0f;border-bottom-color:#23232b;box-shadow:none;
+}
 html[data-theme="noir"] .card,
 html[data-theme="noir"] .panel,
 html[data-theme="noir"] .settings-card,
-html[data-theme="noir"] .modal,
-html[data-theme="noir"] .batch-bar{
-  box-shadow:none;
-  background:#0c0e13;
-  border-color:#1a1e26;
+html[data-theme="noir"] .settings-shell,
+html[data-theme="noir"] .modal{
+  background:#121216;
+  border-color:#23232b;
+  box-shadow:0 1px 0 rgba(255,255,255,.03),0 8px 22px rgba(0,0,0,.35);
 }
-
-html[data-theme="noir"] .theme-opt{
-  box-shadow:none;
-  background:#0a0c10;
-  border-color:#1c212b;
+html[data-theme="noir"] .status-pill.on{
+  color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.28);
 }
-
-html[data-theme="noir"] .theme-opt.active{
-  box-shadow:none;
-  border-color:#3d8fb0;
+html[data-theme="noir"] .status-pill.off{
+  color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(248,113,113,.28);
 }
-
-html[data-theme="noir"] .toast{
-  box-shadow:none;
-  background:#10141c;
-  border-color:#252a34;
-}
-
-html[data-theme="noir"] .status-pill.on{color:#86efac;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.28)}
-
-html[data-theme="noir"] .status-pill.off{color:#fca5a5;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.28)}
-
-html[data-theme="noir"] #s_t_hour{
-  color:#e8edf5 !important;
-  background:#10141c !important;
-  border-color:#2a3140 !important;
-}
-
-html[data-theme="noir"] #s_t_hour option{
-  color:#0b1220 !important;
-  background:#fff !important;
-}
-
-/* TG 按钮：墨夜 */
 html[data-theme="noir"] button.tg-btn{
-  background:#2f6f8a;border-color:#3d8fb0;color:#e8f4fa;box-shadow:none;
+  background:#4f46e5;border-color:#6366f1;color:#fff;box-shadow:none;
 }
-html[data-theme="noir"] button.tg-btn:hover{background:#3d8fb0;border-color:#4fa3c4}
+html[data-theme="noir"] button.tg-btn:hover{
+  background:#6366f1;border-color:#818cf8;
+}

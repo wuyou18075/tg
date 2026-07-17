@@ -15,9 +15,9 @@ export const THEME_ALIAS = {
 export const THEMES = [
   { id: "prairie", name: "原谅色", desc: "柔雾浅绿，清新治愈", file: "tokens/prairie.css", overrides: "overrides/prairie.css" },
   { id: "default", name: "极夜蓝", desc: "深蓝控制台", file: "tokens/default.css" },
-  { id: "cyber", name: "霓虹赛博", desc: "青粉霓虹电光", file: "tokens/cyber.css" },
-  { id: "noir", name: "墨夜", desc: "极哑光深灰黑", file: "tokens/noir.css", overrides: "overrides/noir.css" },
+  { id: "cyber", name: "书卷", desc: "旧书皮淡黄 · 羊皮纸", file: "tokens/cyber.css", overrides: "overrides/cyber.css" },
+  { id: "noir", name: "墨夜", desc: "流行暗色 · 锌灰靛蓝", file: "tokens/noir.css", overrides: "overrides/noir.css" },
   { id: "glass", name: "琉璃", desc: "深空毛玻璃", file: "tokens/glass.css", overrides: "overrides/glass.css" },
-  { id: "paper", name: "雾蓝白", desc: "淡蓝纸感浅色", file: "tokens/paper.css", overrides: "overrides/paper.css" },
-  { id: "crimson", name: "绛夜", desc: "深酒红暗珊瑚", file: "tokens/crimson.css", overrides: "overrides/crimson.css" },
+  { id: "paper", name: "淡雅紫", desc: "淡紫雾感浅色", file: "tokens/paper.css", overrides: "overrides/paper.css" },
+  { id: "crimson", name: "绛夜", desc: "深酒红 + 玫红琥珀", file: "tokens/crimson.css", overrides: "overrides/crimson.css" },
 ];

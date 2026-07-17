@@ -1,14 +1,39 @@
-/* theme token: 绛夜（crimson）— 深酒红暗珊瑚 */
+/* theme token: 绛夜（crimson）— 深酒红底 + 柔玫瑰强调，沉稳不脏粉 */
 html[data-theme="crimson"]{
   color-scheme:dark;
-  --bg:#12090b; --bg2:#1a0e11; --panel:#221316; --panel2:#180d10;
-  --line:#3a2228; --line2:#2c1a1f; --border:#4a2c34;
-  --text:#f3e8ea; --muted:#b79aa0; --label:#d8b8be;
-  --hover:#2b171c; --accent:#c45c6a; --accent2:#a84856;
-  --ok:#3fae7a; --ok2:#329265; --warn:#d4a017; --danger:#e06b6b; --danger2:#c95555;
-  --badge-bg:#3a1c24; --badge-fg:#f0c4cb; --badge-off-bg:#3a1518; --badge-off-fg:#f0a8a8;
-  --rx:#d47884; --tx:#c4a88c; --rx-soft:rgba(212,120,132,.9); --tx-soft:rgba(196,168,140,.88);
-  --rx-fill:rgba(212,120,132,.14); --tx-fill:rgba(196,168,140,.12);
-  --grid:#2c1a1f; --glow:rgba(196,92,106,.12); --header-glow:linear-gradient(90deg,rgba(196,92,106,.12),transparent 70%);
-  --body-bg:radial-gradient(800px 420px at 0% 0%, rgba(196,92,106,.10), transparent 55%), #12090b;
+  --bg:#0f0a0c;
+  --bg2:#161014;
+  --panel:#1c1418;
+  --panel2:#151014;
+  --line:#2e2328;
+  --line2:#241c21;
+  --border:#3d2f36;
+  --text:#f3ecee;
+  --muted:#a8989e;
+  --label:#d4c4c9;
+  --hover:#261c22;
+  --accent:#e11d48;
+  --accent2:#be123c;
+  --ok:#34d399;
+  --ok2:#10b981;
+  --warn:#f59e0b;
+  --danger:#fb7185;
+  --danger2:#f43f5e;
+  --badge-bg:#3f1d2a;
+  --badge-fg:#fecdd3;
+  --badge-off-bg:#3f1518;
+  --badge-off-fg:#fca5a5;
+  /* 入站玫红、出站琥珀金，对比清楚 */
+  --rx:#fb7185;
+  --tx:#fbbf24;
+  --rx-soft:rgba(251,113,133,.88);
+  --tx-soft:rgba(251,191,36,.88);
+  --rx-fill:rgba(251,113,133,.14);
+  --tx-fill:rgba(251,191,36,.12);
+  --grid:#2a2025;
+  --glow:rgba(225,29,72,.12);
+  --header-glow:linear-gradient(90deg,rgba(225,29,72,.10),rgba(251,191,36,.04),transparent 72%);
+  --body-bg:radial-gradient(900px 420px at 8% -8%, rgba(225,29,72,.14), transparent 55%),
+            radial-gradient(700px 360px at 100% 0%, rgba(127,29,63,.12), transparent 50%),
+            #0f0a0c;
 }

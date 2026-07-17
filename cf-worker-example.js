@@ -2343,6 +2343,49 @@ td.ops button{margin-right:4px}
 @media (max-width:640px){.field-row{grid-template-columns:1fr}}
 .inline-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .inline-controls select{width:auto;min-width:120px}
+/* 发送时刻下拉：强制可读，避免主题把 option 做成白字 */
+#s_t_hour.hour-select,
+select#s_t_hour{
+  min-width:140px !important;
+  width:140px !important;
+  height:38px;
+  padding:6px 10px;
+  font-size:14px;
+  font-weight:600;
+  color:var(--text);
+  background:var(--panel2);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  appearance:auto;
+  -webkit-appearance:menulist;
+}
+#s_t_hour.hour-select option,
+select#s_t_hour option{
+  color:#0b1220;
+  background:#ffffff;
+  font-weight:500;
+}
+html[data-theme="glass"] #s_t_hour,
+html[data-theme="glass"] select#s_t_hour{
+  color:#eaf6ff !important;
+  background:#0b1428 !important;
+  border:1px solid #3b82f6 !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html[data-theme="glass"] #s_t_hour option{
+  color:#0b1220 !important;
+  background:#f8fafc !important;
+}
+html[data-theme="noir"] #s_t_hour{
+  color:#e8edf5 !important;
+  background:#10141c !important;
+  border-color:#2a3140 !important;
+}
+html[data-theme="noir"] #s_t_hour option{
+  color:#0b1220 !important;
+  background:#fff !important;
+}
 .section-note{font-size:12px;color:var(--muted);line-height:1.55;margin:0 0 12px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line2);border-radius:10px}
 .sticky-actions{position:sticky;bottom:12px;z-index:5;background:linear-gradient(180deg,transparent,var(--bg) 40%);padding-top:10px;margin-top:4px}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--hover);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;z-index:999;opacity:0;transition:opacity .25s}
@@ -2553,7 +2596,7 @@ textarea:focus{border-color:var(--accent)}
           <div class="field">
             <label for="s_t_hour">每天发送时刻</label>
             <div class="inline-controls">
-              <select id="s_t_hour"></select>
+              <select id="s_t_hour" class="hour-select" onchange="onTgHourChange()" style="min-width:140px;width:140px"></select>
               <span class="muted" style="font-size:12px">整点 · Asia/Shanghai</span>
             </div>
             <input id="s_t_time" type="hidden" value="20:00:00">
@@ -3905,52 +3948,83 @@ function renderThemeUI() {
 // ─── 设置 ───
 function ensureTgHourOptions() {
   const sel = document.getElementById("s_t_hour");
-  if (!sel || sel.options.length) return;
+  if (!sel) return;
+  const prev = sel.value || "20";
+  // 每次重建，避免空 option / 主题切换后显示异常
+  sel.replaceChildren();
   for (let h = 0; h < 24; h++) {
-    const hh = String(h).padStart(2, "0");
+    const hh = (h < 10 ? "0" : "") + h;
     const o = document.createElement("option");
     o.value = hh;
-    o.textContent = hh + ":00";
+    o.text = hh + ":00";
+    o.label = hh + ":00";
     sel.appendChild(o);
   }
-  sel.addEventListener("change", () => {
-    const hh = sel.value || "20";
-    const hidden = document.getElementById("s_t_time");
-    if (hidden) hidden.value = hh + ":00:00";
-    const hint = document.getElementById("hint_t_time");
-    if (hint) hint.textContent = "当前：上海时间 " + hh + ":00 发送（整点，每天一次）";
-  });
+  // 恢复选中
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  else sel.value = "20";
+  if (!sel.dataset.bound) {
+    sel.dataset.bound = "1";
+    sel.addEventListener("change", onTgHourChange);
+  }
+}
+function onTgHourChange() {
+  const sel = document.getElementById("s_t_hour");
+  const hh = (sel && sel.value) ? sel.value : "20";
+  const hidden = document.getElementById("s_t_time");
+  if (hidden) hidden.value = hh + ":00:00";
+  const hint = document.getElementById("hint_t_time");
+  if (hint) hint.textContent = "当前：上海时间 " + hh + ":00 发送（整点，每天一次）";
 }
 function setTgHourFromTime(t) {
   ensureTgHourOptions();
   const m = /^(\d{1,2})/.exec(String(t || "20:00:00").trim());
   let h = m ? Number(m[1]) : 20;
   if (!Number.isFinite(h) || h < 0 || h > 23) h = 20;
-  const hh = String(h).padStart(2, "0");
+  const hh = (h < 10 ? "0" : "") + h;
   const sel = document.getElementById("s_t_hour");
-  if (sel) sel.value = hh;
+  if (sel) {
+    sel.value = hh;
+    // 部分浏览器 value 对不上时用 selectedIndex
+    if (sel.value !== hh) {
+      for (let i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === hh) { sel.selectedIndex = i; break; }
+      }
+    }
+  }
   const hidden = document.getElementById("s_t_time");
   if (hidden) hidden.value = hh + ":00:00";
   const hint = document.getElementById("hint_t_time");
   if (hint) hint.textContent = "当前：上海时间 " + hh + ":00 发送（整点，每天一次）";
 }
 async function loadConfig() {
-  ensureTgHourOptions();
-  const data = await api("/api/config");
-  if (!data) return;
-  // 环境变量来源：输入框留空，避免保存时把 env 值写进 D1
-  document.getElementById("s_t_token").value = data.t_token_from_env ? "" : (data.t_token || "");
-  document.getElementById("s_t_id").value = data.t_id_from_env ? "" : (data.t_id || "");
-  setTgHourFromTime(data.t_time || "20:00:00");
-  document.getElementById("s_cf_time").value = data.cf_time || "0 * * * *";
-  const ht = document.getElementById("hint_t_token");
-  const hi = document.getElementById("hint_t_id");
-  if (ht) ht.textContent = data.t_token_from_env
-    ? "✓ 已使用环境变量 TG_BOT_TOKEN（页面留空即可）"
-    : "页面未填时使用环境变量 TG_BOT_TOKEN";
-  if (hi) hi.textContent = data.t_id_from_env
-    ? "✓ 已使用环境变量 TG_ID（页面留空即可）"
-    : "页面未填时使用环境变量 TG_ID";
+  try {
+    ensureTgHourOptions();
+    const data = await api("/api/config");
+    if (!data) {
+      setTgHourFromTime("20:00:00");
+      return;
+    }
+    // 环境变量来源：输入框留空，避免保存时把 env 值写进 D1
+    const tok = document.getElementById("s_t_token");
+    const tid = document.getElementById("s_t_id");
+    if (tok) tok.value = data.t_token_from_env ? "" : (data.t_token || "");
+    if (tid) tid.value = data.t_id_from_env ? "" : (data.t_id || "");
+    setTgHourFromTime(data.t_time || "20:00:00");
+    const cf = document.getElementById("s_cf_time");
+    if (cf) cf.value = data.cf_time || "0 * * * *";
+    const ht = document.getElementById("hint_t_token");
+    const hi = document.getElementById("hint_t_id");
+    if (ht) ht.textContent = data.t_token_from_env
+      ? "✓ 已使用环境变量 TG_BOT_TOKEN（页面留空即可）"
+      : "页面未填时使用环境变量 TG_BOT_TOKEN";
+    if (hi) hi.textContent = data.t_id_from_env
+      ? "✓ 已使用环境变量 TG_ID（页面留空即可）"
+      : "页面未填时使用环境变量 TG_ID";
+  } catch (e) {
+    console.log("loadConfig", e);
+    setTgHourFromTime("20:00:00");
+  }
 }
 
 async function loadLoginLogs() {

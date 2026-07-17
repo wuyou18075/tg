@@ -4855,10 +4855,16 @@ async function purgeOldestLoginLogs() {
     toast("请输入要删除的正整数条数");
     return;
   }
-  const preview = logsTotal > 0
-    ? ("当前共 " + logsTotal + " 条，将删除最早 " + Math.min(n, logsTotal) + " 条" + (n > logsTotal ? "（输入超过总数，将全部删除）" : ""))
-    : ("将尝试删除最早 " + n + " 条");
-  if (!confirm(preview + "\n确定删除？此操作不可恢复。")) return;
+  const NL = String.fromCharCode(10);
+  let preview;
+  if (logsTotal > 0) {
+    preview = "当前共 " + logsTotal + " 条，将删除最早 " + Math.min(n, logsTotal) + " 条";
+    if (n > logsTotal) preview += "（输入超过总数，将全部删除）";
+  } else {
+    preview = "将尝试删除最早 " + n + " 条";
+  }
+  preview += NL + "确定删除？此操作不可恢复。";
+  if (!confirm(preview)) return;
   try {
     const data = await api("/api/login-logs/purge-oldest", {
       method: "POST",
@@ -5635,7 +5641,7 @@ export default {
         try {
           const time = new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
           await sendTgMessage(env,
-            "🔐 看板登录成功\n时间：" + time + "\nIP：" + ip + "\n设备：" + String(ua).slice(0, 120));
+            " 看板登录成功\n时间：" + time + "\nIP：" + ip + "\n设备：" + String(ua).slice(0, 120));
         } catch { /* ignore */ }
         const token = await makeSessionToken(env);
         return new Response(null, { status: 302, headers: { Location: "/", "Set-Cookie": sessionCookie(token) } });

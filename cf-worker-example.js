@@ -2258,10 +2258,13 @@ button.warn{background:var(--warn);border-color:var(--warn);font-weight:600;colo
 main{padding:16px 20px 40px;max-width:1200px;margin:0 auto}
 .page{display:none}
 .page.active{display:block}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:0 0 24px var(--glow)}
 .card .label{font-size:12px;color:var(--muted)}
 .card .val{font-size:20px;font-weight:700;margin-top:6px}
+.card .val.rx{color:var(--rx)}
+.card .val.tx{color:var(--tx)}
+.card .sub{font-size:11px;color:var(--muted);margin-top:6px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:16px}
 .panel h2{font-size:14px;margin:0 0 12px;color:var(--label);font-weight:600}
 .chart-wrap{position:relative;height:280px}
@@ -2911,11 +2914,19 @@ function renderSummary() {
     month_rx: a.month_rx + (m.month?.rx||0), month_tx: a.month_tx + (m.month?.tx||0),
   }), {today_rx:0,today_tx:0,month_rx:0,month_tx:0});
   const on = machines.filter(m => online(m.ts)).length;
+  const todayTotal = sum.today_rx + sum.today_tx;
+  const monthTotal = sum.month_rx + sum.month_tx;
   document.getElementById("summary").innerHTML = [
     '<div class="card"><div class="label">机器数</div><div class="val">' + machines.length + "</div></div>",
     '<div class="card"><div class="label">在线（2h）</div><div class="val">' + on + "</div></div>",
-    '<div class="card"><div class="label">今日合计</div><div class="val">' + gb(sum.today_rx+sum.today_tx) + "</div></div>",
-    '<div class="card"><div class="label">本月合计</div><div class="val">' + gb(sum.month_rx+sum.month_tx) + "</div></div>",
+    '<div class="card"><div class="label">今日入站</div><div class="val rx">' + gb(sum.today_rx) + "</div>"
+      + '<div class="sub">合计 ' + gb(todayTotal) + "</div></div>",
+    '<div class="card"><div class="label">今日出站</div><div class="val tx">' + gb(sum.today_tx) + "</div>"
+      + '<div class="sub">合计 ' + gb(todayTotal) + "</div></div>",
+    '<div class="card"><div class="label">本月入站</div><div class="val rx">' + gb(sum.month_rx) + "</div>"
+      + '<div class="sub">合计 ' + gb(monthTotal) + "</div></div>",
+    '<div class="card"><div class="label">本月出站</div><div class="val tx">' + gb(sum.month_tx) + "</div>"
+      + '<div class="sub">合计 ' + gb(monthTotal) + "</div></div>",
   ].join("");
 }
 

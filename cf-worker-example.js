@@ -1962,7 +1962,7 @@ html[data-theme="paper"]{
   --grid:#d3e0ef; --glow:rgba(59,111,212,.08); --header-glow:linear-gradient(90deg,rgba(59,111,212,.06),transparent);
   --body-bg:linear-gradient(180deg,#e3ecf7 0%,#eaf1f9 50%,#e6eef8 100%);
 }
-/* 原谅色（prairie）：柔雾浅绿 + 森林强调 */
+/* 原谅色（prairie）：柔雾浅绿 UI + 图表入/出冷暖强对比 */
 html[data-theme="prairie"]{
   color-scheme:light;
   --bg:#f3f7f1; --bg2:#f8fbf6; --panel:#ffffff; --panel2:#eef5ea;
@@ -1971,9 +1971,10 @@ html[data-theme="prairie"]{
   --hover:#e5f0e3; --accent:#3f7d4e; --accent2:#326641;
   --ok:#4f8f5c; --ok2:#3f7d4e; --warn:#c28b2a; --danger:#c45c5c; --danger2:#a84848;
   --badge-bg:#dcead9; --badge-fg:#2f5a3a; --badge-off-bg:#f3d6d6; --badge-off-fg:#8a3a3a;
-  --rx:#4f8f5c; --tx:#6b9e6f; --rx-soft:rgba(79,143,92,.9); --tx-soft:rgba(107,158,111,.88);
-  --rx-fill:rgba(79,143,92,.14); --tx-fill:rgba(107,158,111,.12);
-  --grid:#dfead9; --glow:rgba(63,125,78,.10); --header-glow:linear-gradient(90deg,rgba(63,125,78,.08),rgba(180,200,150,.05));
+  /* 入站冷色蓝、出站暖琥珀，避免两条都是绿 */
+  --rx:#2563eb; --tx:#d97706; --rx-soft:rgba(37,99,235,.88); --tx-soft:rgba(217,119,6,.88);
+  --rx-fill:rgba(37,99,235,.14); --tx-fill:rgba(217,119,6,.12);
+  --grid:#d5e3d2; --glow:rgba(63,125,78,.08); --header-glow:linear-gradient(90deg,rgba(63,125,78,.08),rgba(180,200,150,.05));
 }
 /* 暗夜红：深酒红底 + 暗珊瑚强调，沉稳不刺眼 */
 html[data-theme="crimson"]{
@@ -2021,36 +2022,62 @@ html[data-theme="glass"] select:not(#themeSelect){
   border-color:rgba(255,255,255,.16);
   color:var(--text);
 }
-/* 玻璃主题按钮配色 */
+/* 琉璃按钮：半透明实色，避免渐变在毛玻璃上发脏/失真 */
 html[data-theme="glass"] button.primary,
 html[data-theme="glass"] .seg button.active{
-  background:linear-gradient(180deg,#7dd3fc,#38bdf8);
-  border:1px solid rgba(186,230,253,.55);
+  background:rgba(56,189,248,.88);
+  border:1px solid rgba(125,211,252,.65);
   color:#041018;
   font-weight:700;
-  box-shadow:0 6px 18px rgba(56,189,248,.22);
+  box-shadow:0 4px 14px rgba(56,189,248,.18);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
 }
 html[data-theme="glass"] button.primary:hover{
-  background:linear-gradient(180deg,#bae6fd,#38bdf8);
-  border-color:rgba(224,242,254,.7);
+  background:rgba(125,211,252,.95);
+  border-color:rgba(186,230,253,.8);
+  color:#041018;
 }
 html[data-theme="glass"] button.green{
-  background:linear-gradient(180deg,#6ee7b7,#34d399);
-  border:1px solid rgba(167,243,208,.45);
+  background:rgba(52,211,153,.88);
+  border:1px solid rgba(110,231,183,.6);
   color:#042f1a;
   font-weight:700;
+  box-shadow:0 4px 12px rgba(52,211,153,.16);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+html[data-theme="glass"] button.green:hover{
+  background:rgba(110,231,183,.95);
 }
 html[data-theme="glass"] button.warn{
-  background:linear-gradient(180deg,#fcd34d,#f59e0b);
-  border:1px solid rgba(253,230,138,.5);
-  color:#3b2503;
+  background:rgba(245,158,11,.9);
+  border:1px solid rgba(251,191,36,.65);
+  color:#1f1403;
   font-weight:700;
+  box-shadow:0 4px 12px rgba(245,158,11,.16);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+html[data-theme="glass"] button.warn:hover{
+  background:rgba(251,191,36,.95);
 }
 html[data-theme="glass"] button.danger{
-  background:linear-gradient(180deg,#fda4af,#fb7185);
-  border:1px solid rgba(254,205,211,.45);
-  color:#4c0519;
+  background:rgba(251,113,133,.9);
+  border:1px solid rgba(253,164,175,.6);
+  color:#3f0a14;
   font-weight:700;
+  box-shadow:0 4px 12px rgba(251,113,133,.16);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+html[data-theme="glass"] button.danger:hover{
+  background:rgba(253,164,175,.95);
+}
+html[data-theme="glass"] button.sm.primary,
+html[data-theme="glass"] button.sm.green,
+html[data-theme="glass"] button.sm.danger{
+  box-shadow:none;
 }
 /* 普通下拉：深底浅字；选项层：浅底深字 */
 html[data-theme="glass"] select:not(#themeSelect),
@@ -2378,7 +2405,7 @@ textarea:focus{border-color:var(--accent)}
 .theme-opt[data-id="noir"]{--sw1:#050608;--sw2:#3d8fb0;--sw3:#1a1e26}
 .theme-opt[data-id="glass"]{--sw1:#0a1024;--sw2:#7dd3fc;--sw3:#a5b4fc}
 .theme-opt[data-id="paper"]{--sw1:#e6eef8;--sw2:#3b82f6;--sw3:#14b8a6}
-.theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#3f7d4e;--sw3:#6b9e6f}
+.theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#2563eb;--sw3:#d97706}
 .theme-opt[data-id="crimson"]{--sw1:#12090b;--sw2:#c45c6a;--sw3:#4a2c34}
 </style>
 
@@ -3235,11 +3262,15 @@ function buildLineChart(canvas, points, opts) {
       data: rx,
       borderColor: tc.rx,
       backgroundColor: tc.rxFill,
-      borderWidth: 2,
-      pointRadius: 2,
-      pointHoverRadius: 4,
-      tension: 0.25,
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      pointBackgroundColor: tc.rx,
+      pointBorderColor: "#fff",
+      pointBorderWidth: 1,
+      tension: 0.3,
       fill: true,
+      order: 1,
     });
   }
   if (showTx) {
@@ -3248,11 +3279,15 @@ function buildLineChart(canvas, points, opts) {
       data: tx,
       borderColor: tc.tx,
       backgroundColor: tc.txFill,
-      borderWidth: 2,
-      pointRadius: 2,
-      pointHoverRadius: 4,
-      tension: 0.25,
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      pointBackgroundColor: tc.tx,
+      pointBorderColor: "#fff",
+      pointBorderWidth: 1,
+      tension: 0.3,
       fill: true,
+      order: 2,
     });
   }
   if (!datasets.length) {
@@ -3321,7 +3356,7 @@ function buildStackedChart(canvas, points, opts) {
       data: rx,
       backgroundColor: tc.rxSoft,
       borderColor: tc.rx,
-      borderWidth: 1,
+      borderWidth: 1.5,
       borderRadius: 3,
       stack: "t",
     });
@@ -3332,7 +3367,7 @@ function buildStackedChart(canvas, points, opts) {
       data: tx,
       backgroundColor: tc.txSoft,
       borderColor: tc.tx,
-      borderWidth: 1,
+      borderWidth: 1.5,
       borderRadius: 3,
       stack: "t",
     });

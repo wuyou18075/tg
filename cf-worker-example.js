@@ -312,6 +312,17 @@ async function ensureSchema(env) {
       `CREATE TABLE IF NOT EXISTS vps_tokens (
         machine_id TEXT PRIMARY KEY, token TEXT NOT NULL, created_at INTEGER
       )`),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS api_usage (
+        day TEXT NOT NULL,
+        hour INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        method TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, hour, path, method)
+      )`),
+    env.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_api_usage_day ON api_usage(day)`),
   ]);
   try {
     await env.DB.prepare(`ALTER TABLE machines ADD COLUMN callback_url TEXT`).run();
@@ -1750,6 +1761,142 @@ const UI_PREF_DEFAULTS = {
   rank_mode: "today",
   logs_page_size: "20",
 };
+
+// ─── API 用量统计（内存聚合，阈值/定时刷盘，省免费额度） ───
+const _usageBuf = new Map();
+let _usageBufN = 0;
+let _usageFlushing = false;
+
+function shanghaiNowParts(tsSec) {
+  const t = Number(tsSec) || Math.floor(Date.now() / 1000);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(t * 1000));
+  const get = (type) => (parts.find((p) => p.type === type) || {}).value || "00";
+  return {
+    day: get("year") + "-" + get("month") + "-" + get("day"),
+    hour: Number(get("hour")) || 0,
+  };
+}
+
+function normalizeUsagePath(pathname) {
+  let p = String(pathname || "/");
+  if (!p.startsWith("/")) p = "/" + p;
+  if (p.startsWith("/api/")) {
+    const segs = p.split("/").filter(Boolean);
+    if (segs.length > 3) p = "/" + segs.slice(0, 3).join("/");
+    return p.slice(0, 80);
+  }
+  if (p === "/" || p === "/index.html") return "/";
+  if (p === "/login" || p === "/logout") return p;
+  if (p.startsWith("/favicon")) return "/favicon";
+  return p.slice(0, 80);
+}
+
+function trackApiUsage(req, url) {
+  try {
+    const { day, hour } = shanghaiNowParts();
+    const method = String((req && req.method) || "GET").toUpperCase().slice(0, 8);
+    const path = normalizeUsagePath(url && url.pathname);
+    const key = day + "|" + hour + "|" + method + "|" + path;
+    _usageBuf.set(key, (_usageBuf.get(key) || 0) + 1);
+    _usageBufN += 1;
+  } catch { /* ignore */ }
+}
+
+async function flushApiUsage(env, force) {
+  if (!env || !env.DB) return;
+  if (_usageFlushing || !_usageBufN) return;
+  if (!force && _usageBufN < 25) return;
+  _usageFlushing = true;
+  try {
+    const entries = [..._usageBuf.entries()];
+    _usageBuf.clear();
+    _usageBufN = 0;
+    for (let i = 0; i < entries.length; i += 40) {
+      const chunk = entries.slice(i, i + 40);
+      const stmts = chunk.map(([key, n]) => {
+        const [day, hour, method, path] = key.split("|");
+        return env.DB.prepare(
+          `INSERT INTO api_usage (day, hour, path, method, count)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(day, hour, path, method) DO UPDATE SET
+             count = count + excluded.count`
+        ).bind(day, Number(hour) || 0, path, method, Number(n) || 0);
+      });
+      await env.DB.batch(stmts);
+    }
+  } catch (e) {
+    console.log("[usage] flush", e && e.message);
+  } finally {
+    _usageFlushing = false;
+  }
+}
+
+async function getApiUsageSummary(env, { days } = {}) {
+  const nDays = Math.min(14, Math.max(1, Number(days) || 2));
+  const now = Math.floor(Date.now() / 1000);
+  const daysList = [];
+  for (let i = 0; i < nDays; i++) daysList.push(shanghaiBucket(now - i * 86400, false));
+  const today = daysList[0];
+  if (!env.DB) {
+    return { ok: true, today, days: daysList, totals: {}, today_total: 0, by_path: [], by_hour: [], tips: [] };
+  }
+  try { await flushApiUsage(env, true); } catch {}
+
+  const ph = daysList.map(() => "?").join(",");
+  const dayRows = await env.DB.prepare(
+    `SELECT day, SUM(count) AS c FROM api_usage WHERE day IN (${ph}) GROUP BY day`
+  ).bind(...daysList).all();
+  const totals = {};
+  for (const d of daysList) totals[d] = 0;
+  for (const r of dayRows.results || []) totals[r.day] = Number(r.c) || 0;
+
+  const pathRows = await env.DB.prepare(
+    `SELECT path, method, SUM(count) AS c FROM api_usage WHERE day = ?
+     GROUP BY path, method ORDER BY c DESC LIMIT 40`
+  ).bind(today).all();
+  const by_path = (pathRows.results || []).map((r) => ({
+    path: r.path, method: r.method, count: Number(r.c) || 0,
+  }));
+
+  const hourRows = await env.DB.prepare(
+    `SELECT hour, SUM(count) AS c FROM api_usage WHERE day = ?
+     GROUP BY hour ORDER BY hour ASC`
+  ).bind(today).all();
+  const by_hour = Array.from({ length: 24 }, (_, h) => ({ hour: h, count: 0 }));
+  for (const r of hourRows.results || []) {
+    const h = Number(r.hour) || 0;
+    if (h >= 0 && h < 24) by_hour[h].count = Number(r.c) || 0;
+  }
+
+  const today_total = totals[today] || 0;
+  let peak_hour = 0, peak_count = 0;
+  for (const x of by_hour) {
+    if (x.count > peak_count) { peak_count = x.count; peak_hour = x.hour; }
+  }
+  const tips = [];
+  if (today_total > 20000) tips.push("今日请求已较高，注意免费额度");
+  if (peak_count >= Math.max(50, today_total * 0.25)) {
+    tips.push("峰值小时 " + String(peak_hour).padStart(2, "0") + ":00 占比较高");
+  }
+  const share = (path) => by_path.filter((x) => x.path === path).reduce((a, x) => a + x.count, 0);
+  if (today_total > 0 && share("/api/report") / today_total > 0.5) {
+    tips.push("过半请求来自 /api/report（VPS 上报），可降低上报频率");
+  }
+  if (today_total > 0 && share("/api/history") / today_total > 0.3) {
+    tips.push("/api/history 偏高：关闭总流量统计或减少刷新可省额度");
+  }
+  if (today_total > 0 && share("/api/machines") / today_total > 0.3) {
+    tips.push("/api/machines 偏高：获取流量轮询或频繁刷新会放大请求");
+  }
+  return {
+    ok: true, today, days: daysList, totals, today_total,
+    by_path, by_hour, peak_hour, peak_count, tips,
+  };
+}
 
 async function getUiPrefs(env) {
   const out = { ...UI_PREF_DEFAULTS };
@@ -3828,6 +3975,38 @@ textarea:focus{border-color:var(--accent)}
 <!-- Toast -->
 
 <!-- 更新注册弹窗 -->
+
+  <!-- 用量页 -->
+  <div id="pageUsage" class="page">
+    <div class="panel">
+      <div class="list-head">
+        <h2>Worker 调用用量</h2>
+        <div class="list-head-actions">
+          <button type="button" class="primary" onclick="loadUsageStats()">刷新用量</button>
+        </div>
+      </div>
+      <p class="muted" style="margin:0 0 12px;line-height:1.55">
+        统计本 Worker 请求路径分布，用于排查额度突增（上报、看板刷新或外部扫描）。
+        内存聚合后批量写入 D1，尽量少占免费额度。时区 Asia/Shanghai。
+      </p>
+      <div class="cards" id="usageSummaryCards"><div class="card"><div class="label">加载中</div><div class="val">…</div></div></div>
+      <div class="panel" style="margin:12px 0;padding:12px">
+        <h2 style="margin-bottom:8px">今日按小时</h2>
+        <div class="chart-wrap" style="height:220px"><canvas id="usageHourChart"></canvas></div>
+      </div>
+      <div class="panel" style="margin:0;padding:12px">
+        <h2 style="margin-bottom:8px">今日路径 TOP</h2>
+        <div style="overflow:auto">
+          <table>
+            <thead><tr><th>方法</th><th>路径</th><th>次数</th><th>占比</th></tr></thead>
+            <tbody id="usagePathBody"><tr><td colspan="4">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="usageTips" class="muted" style="margin-top:10px;line-height:1.55"></div>
+      </div>
+    </div>
+  </div>
+
 <div class="modal-overlay" id="modalUpdate">
   <div class="modal">
     <h2>更新注册</h2>
@@ -4287,13 +4466,16 @@ function shanghaiTodayStr() {
 /** 日内日期下拉：近 31 个上海自然日（含今天） */
 /** 把各种日期字符串规范成 YYYY-MM-DD；失败返回空串 */
 function normalizeDayStr(s) {
+  // 不用正则：外层模板字符串里 \d 极易转义错导致页面脚本语法错误
   const t = String(s == null ? "" : s).trim();
-  let m = /^(\\d{4})-(\\d{1,2})-(\\d{1,2})$/.exec(t);
-  if (!m) m = /^(\\d{4})\\/(\\d{1,2})\\/(\\d{1,2})$/.exec(t);
-  if (!m) m = /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})$/.exec(t);
-  if (!m) return "";
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return "";
+  let sep = "-";
+  if (t.indexOf("/") >= 0) sep = "/";
+  else if (t.indexOf(".") >= 0) sep = ".";
+  const parts = t.split(sep);
+  if (parts.length !== 3) return "";
+  const y = Number(parts[0]), mo = Number(parts[1]), d = Number(parts[2]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return "";
+  if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return "";
   return y + "-" + String(mo).padStart(2, "0") + "-" + String(d).padStart(2, "0");
 }
 function hourDayOptions() {
@@ -4351,6 +4533,7 @@ function switchTab(name) {
     dash: { page: "pageDash", tab: "tabDash" },
     settings: { page: "pageSettings", tab: "tabSet" },
     logs: { page: "pageLogs", tab: "tabLogs" },
+    usage: { page: "pageUsage", tab: "tabUsage" },
   };
   const m = map[name] || {
     page: "page" + name[0].toUpperCase() + name.slice(1),
@@ -4369,6 +4552,7 @@ function switchTab(name) {
   // 回看板只刷新列表，图表有数据则不强制重拉，减少卡顿感
   if (name === "dash") refresh({ history: !chartHasData(mainPoints), tg: false });
   if (name === "logs") loadLoginLogs();
+  if (name === "usage") loadUsageStats();
 }
 
 async function api(path, opts) {
@@ -6518,6 +6702,106 @@ function updateLogsPager() {
   if (prev) prev.disabled = logsPage <= 1;
   if (next) next.disabled = logsPage >= logsPages;
 }
+
+let usageHourChart = null;
+async function loadUsageStats() {
+  const cards = document.getElementById("usageSummaryCards");
+  const body = document.getElementById("usagePathBody");
+  const tipsEl = document.getElementById("usageTips");
+  if (cards) cards.innerHTML = '<div class="card"><div class="label">加载中</div><div class="val">…</div></div>';
+  try {
+    const data = await api("/api/usage?days=2");
+    if (!data || !data.ok) {
+      if (cards) cards.innerHTML = '<div class="card"><div class="label">失败</div><div class="val">—</div></div>';
+      toast((data && data.error) || "加载用量失败");
+      return;
+    }
+    const today = data.today || "—";
+    const todayTotal = Number(data.today_total) || 0;
+    const days = data.days || [];
+    const totals = data.totals || {};
+    const yday = days[1] || "";
+    const yTotal = yday ? (Number(totals[yday]) || 0) : 0;
+    const peakH = Number(data.peak_hour) || 0;
+    const peakC = Number(data.peak_count) || 0;
+    if (cards) {
+      cards.innerHTML = [
+        '<div class="card"><div class="label">今日请求</div><div class="val">' + todayTotal + '</div><div class="sub">' + today + '</div></div>',
+        '<div class="card"><div class="label">昨日请求</div><div class="val">' + yTotal + '</div><div class="sub">' + (yday || "—") + '</div></div>',
+        '<div class="card"><div class="label">今日峰值小时</div><div class="val">' + String(peakH).padStart(2,"0") + ':00</div><div class="sub">' + peakC + ' 次</div></div>',
+        '<div class="card"><div class="label">路径种类</div><div class="val">' + ((data.by_path || []).length) + '</div><div class="sub">TOP 列表见下</div></div>',
+      ].join("");
+    }
+    if (body) {
+      body.replaceChildren();
+      const rows = data.by_path || [];
+      if (!rows.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 4;
+        td.textContent = "暂无数据（部署后产生请求才会累计）";
+        tr.appendChild(td);
+        body.appendChild(tr);
+      } else {
+        for (const r of rows) {
+          const tr = document.createElement("tr");
+          const c = Number(r.count) || 0;
+          const pct = todayTotal > 0 ? ((c / todayTotal) * 100).toFixed(1) + "%" : "—";
+          for (const t of [r.method || "—", r.path || "—", String(c), pct]) {
+            const td = document.createElement("td");
+            td.textContent = t;
+            tr.appendChild(td);
+          }
+          body.appendChild(tr);
+        }
+      }
+    }
+    if (tipsEl) {
+      const tips = data.tips || [];
+      tipsEl.textContent = tips.length
+        ? ("提示：" + tips.join("；"))
+        : "提示：若某小时突增，对照路径 TOP 判断是上报、看板刷新还是外部扫描。";
+    }
+    await whenChartReady();
+    const canvas = document.getElementById("usageHourChart");
+    if (canvas && typeof Chart !== "undefined") {
+      const byHour = data.by_hour || [];
+      const labels = byHour.map((x) => String(x.hour).padStart(2, "0"));
+      const vals = byHour.map((x) => Number(x.count) || 0);
+      const tc = themeChartColors();
+      if (usageHourChart) { try { usageHourChart.destroy(); } catch {} }
+      usageHourChart = new Chart(canvas, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{
+            label: "请求次数",
+            data: vals,
+            backgroundColor: tc.rxSoft,
+            borderColor: tc.rx,
+            borderWidth: 1,
+            borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { ticks: { color: tc.muted, maxTicksLimit: 12 }, grid: { display: false } },
+            y: { beginAtZero: true, ticks: { color: tc.muted }, grid: { color: tc.grid } },
+          },
+          plugins: {
+            legend: { display: false },
+            title: { display: true, text: "今日每小时请求量", color: tc.text },
+          },
+        },
+      });
+    }
+  } catch (e) {
+    toast("加载用量失败：" + (e && e.message ? e.message : e));
+  }
+}
+
 async function loadLoginLogs() {
   const tb = document.getElementById("loginLogsBody");
   if (!tb) return;
@@ -7323,6 +7607,7 @@ setInterval(tickDashClock, 1000);
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    try { trackApiUsage(req, url); } catch {}
 
     // 无 DB 的静态路径：不跑 ensureSchema
     if (req.method === "GET" && (url.pathname === "/favicon.ico" || url.pathname === "/favicon.png")) {
@@ -7363,6 +7648,7 @@ export default {
       }
 
       await upsertReport(env, { ...body, machine_id: mid });
+      try { await flushApiUsage(env, false); } catch {}
       return json(auth.new_access_token ? { ok: true, new_access_token: auth.new_access_token } : { ok: true });
     }
 
@@ -7727,12 +8013,25 @@ export default {
       return json(result);
     }
 
+    // GET /api/usage — Worker 调用用量分析（登录后）
+    if (req.method === "GET" && url.pathname === "/api/usage") {
+      if (!(await requireDash(req, env))) return json({ ok: false, error: "unauthorized" }, 401);
+      try {
+        const days = Number(url.searchParams.get("days") || 2);
+        return json(await getApiUsageSummary(env, { days }));
+      } catch (e) {
+        return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
+      }
+    }
+
     // GET / — 看板
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       // 打开看板不读 D1 偏好，省请求；主题用 cookie，完整偏好进页后按会话拉取
+      try { await flushApiUsage(env, false); } catch {}
       return html(dashboardPage(req, null));
     }
 
+    try { await flushApiUsage(env, false); } catch {}
     return json({ ok: false, error: "not found" }, 404);
   },
 
@@ -7742,6 +8041,7 @@ export default {
       try {
         if (!env.DB) return;
         await ensureSchema(env);
+        try { await flushApiUsage(env, true); } catch (e) { console.log("[scheduled] usage flush", e && e.message); }
         // 每日最多清一次 90 天前 snapshot（不堵上报热路径）
         try { await cleanupOldSnapshots(env); } catch (e) { console.log("[scheduled] cleanup", e && e.message); }
         await checkOffline(env);

@@ -3662,6 +3662,7 @@ textarea:focus{border-color:var(--accent)}
       <a id="tabDash" class="active" onclick="switchTab('dash')">看板</a>
       <a id="tabSet" onclick="switchTab('settings')">设置</a>
       <a id="tabLogs" onclick="switchTab('logs')">日志</a>
+      <a id="tabUsage" onclick="switchTab('usage')">用量</a>
     </div>
   </div>
   <div class="actions">

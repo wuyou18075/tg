@@ -2207,7 +2207,7 @@ function dashboardPage(req, serverPrefs) {
   try{t=localStorage.getItem(k)}catch(e){}
   if(!t){
     try{
-      var m=document.cookie.match(/(?:^|;\s*)dash_theme=([^;]+)/);
+      var m=document.cookie.match(/(?:^|;\\s*)dash_theme=([^;]+)/);
       if(m) t=decodeURIComponent(m[1]);
     }catch(e){}
   }
@@ -4288,9 +4288,9 @@ function shanghaiTodayStr() {
 /** 把各种日期字符串规范成 YYYY-MM-DD；失败返回空串 */
 function normalizeDayStr(s) {
   const t = String(s == null ? "" : s).trim();
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
-  if (!m) m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(t);
-  if (!m) m = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(t);
+  let m = /^(\\d{4})-(\\d{1,2})-(\\d{1,2})$/.exec(t);
+  if (!m) m = /^(\\d{4})\\/(\\d{1,2})\\/(\\d{1,2})$/.exec(t);
+  if (!m) m = /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})$/.exec(t);
   if (!m) return "";
   const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
   if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return "";
@@ -4409,7 +4409,7 @@ function online(ts) { return ts && ((Date.now()/1000 - ts) < 7200); }
 
 /** 列表展示截断：最多 max 字符，过长加…；完整内容放 title */
 function clipText(s, max) {
-  const t = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  const t = String(s == null ? "" : s).replace(/\\s+/g, " ").trim();
   const n = Math.max(4, Number(max) || 20);
   if (!t) return "";
   if (t.length <= n) return t;
@@ -5561,7 +5561,7 @@ function buildLineChart(canvas, chartData, opts) {
   const labels = points.map(p => {
     // "2026-07-17 14:00" → "14:00"，跨天保留月-日
     const b = String(p.bucket || "");
-    const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/.exec(b);
+    const m = /^(\\d{4})-(\\d{2})-(\\d{2}) (\\d{2}:\\d{2})$/.exec(b);
     if (!m) return b;
     return m[4];
   });
@@ -6395,7 +6395,7 @@ function renderThemeUI() {
   try { saved = localStorage.getItem("dash_theme"); } catch {}
   if (!saved) {
     try {
-      const m = document.cookie.match(/(?:^|;\s*)dash_theme=([^;]+)/);
+      const m = document.cookie.match(/(?:^|;\\s*)dash_theme=([^;]+)/);
       if (m) saved = decodeURIComponent(m[1]);
     } catch {}
   }
@@ -6438,7 +6438,7 @@ function onTgHourChange() {
 }
 function setTgHourFromTime(t) {
   ensureTgHourOptions();
-  const m = /^(\d{1,2})/.exec(String(t || "20:00:00").trim());
+  const m = /^(\\d{1,2})/.exec(String(t || "20:00:00").trim());
   let h = m ? Number(m[1]) : 20;
   if (!Number.isFinite(h) || h < 0 || h > 23) h = 20;
   const hh = (h < 10 ? "0" : "") + h;
@@ -6814,7 +6814,7 @@ async function saveConfig() {
     // 以小时下拉为准，写回 HH:00:00
     const hourSel = document.getElementById("s_t_hour");
     let hh = hourSel ? String(hourSel.value || "20") : "20";
-    if (!/^\d{1,2}$/.test(hh) || Number(hh) < 0 || Number(hh) > 23) hh = "20";
+    if (!/^\\d{1,2}$/.test(hh) || Number(hh) < 0 || Number(hh) > 23) hh = "20";
     hh = String(Number(hh)).padStart(2, "0");
     const t_time = hh + ":00:00";
     const hidden = document.getElementById("s_t_time");
@@ -6858,7 +6858,7 @@ function reasonLabel(state, detail, status) {
     if (/cfTcpConnect 不可用|sockets/i.test(d)) {
       return d.slice(0, 160);
     }
-    if (/建连失败|connect\(\) 失败|ECONNREFUSED|Connection refused/i.test(d)) {
+    if (/建连失败|connect\\(\\) 失败|ECONNREFUSED|Connection refused/i.test(d)) {
       return "连不上回调口 · " + d.slice(0, 140);
     }
     if (/超时|Timeout|timeout|abort/i.test(d)) {
@@ -7150,7 +7150,7 @@ async function confirmUpdateVps() {
   const cb_port = ((document.getElementById("upCbPort") || {}).value || "").trim();
   const rotate_token = document.getElementById("upRotate").checked;
   if (!machine_id) { toast("请填写机器 ID"); return; }
-  if (cb_port && !/^\d+$/.test(cb_port)) { toast("回调端口应为纯数字"); return; }
+  if (cb_port && !/^\\d+$/.test(cb_port)) { toast("回调端口应为纯数字"); return; }
   if (cb_port && (Number(cb_port) < 1024 || Number(cb_port) > 65535)) { toast("回调端口需在 1024-65535，当前 " + cb_port); return; }
   const btn = document.querySelector("#upBtnRegion .green");
   if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
@@ -7233,7 +7233,7 @@ async function genCmd() {
     return;
   }
   const cbRaw = ((document.getElementById("vpsCbPort") || {}).value || "").trim();
-  let cbPort = /^\d+$/.test(cbRaw) ? Number(cbRaw) : 19840;
+  let cbPort = /^\\d+$/.test(cbRaw) ? Number(cbRaw) : 19840;
   if (cbPort < 1024 || cbPort > 65535) { toast("回调端口需在 1024-65535，当前 " + cbPort); return; }
   const btn = document.querySelector("#vpsBtnRegion .green");
   if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }

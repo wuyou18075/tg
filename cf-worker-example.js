@@ -12,6 +12,7 @@
  *   3. 绑定 D1：变量名必须是 DB
  *   4. 加密变量：PASSWORD（看板密码，必填）
  *                 TG_ID / TG_BOT_TOKEN（TG 汇总，可选；页面未填时使用）
+ *                 CF_ANALYTICS_TOKEN / CLOUDFLARE_ACCOUNT_ID（用量页 CF 官方统计，可选；只读）
  * - access_token：Web(Worker) ↔ VPS 通信密钥（每台独立，看板生成）
  * - TG_TOKEN：TG 机器人 Token，VPS 用它给 TG 发消息（tgSummary）；与上报鉴权无关
  *   5. 再部署一次使绑定生效
@@ -1809,7 +1810,7 @@ function trackApiUsage(req, url) {
 async function flushApiUsage(env, force) {
   if (!env || !env.DB) return;
   if (_usageFlushing || !_usageBufN) return;
-  if (!force && _usageBufN < 25) return;
+  if (!force && _usageBufN < 200) return;
   _usageFlushing = true;
   try {
     const entries = [..._usageBuf.entries()];
@@ -1844,7 +1845,7 @@ async function getApiUsageSummary(env, { days } = {}) {
   if (!env.DB) {
     return { ok: true, today, days: daysList, totals: {}, today_total: 0, by_path: [], by_hour: [], tips: [] };
   }
-  try { await flushApiUsage(env, true); } catch {}
+  try { await flushApiUsage(env, false); } catch {}
 
   const ph = daysList.map(() => "?").join(",");
   const dayRows = await env.DB.prepare(
@@ -1896,6 +1897,122 @@ async function getApiUsageSummary(env, { days } = {}) {
     ok: true, today, days: daysList, totals, today_total,
     by_path, by_hour, peak_hour, peak_count, tips,
   };
+}
+
+// ─── CF 官方 Analytics（GraphQL workersInvocationsAdaptive）— 权威总量，含 cron/scheduled ───
+// 出站 subrequest，不计入入站"请求数"额度；服务端 10min 缓存封顶调用频率。
+let _cfAnalyticsCache = null; // { ts, days, payload }
+let _usageRespCache = null;   // { ts, days, payload }  /api/usage 合并响应缓存
+const CF_ANALYTICS_TTL_MS = 10 * 60 * 1000;
+const USAGE_RESP_TTL_MS = 5 * 60 * 1000;
+const CF_ANALYTICS_LIMIT = 10000;
+
+async function getCfAnalyticsSummary(env, { days } = {}) {
+  const nDays = Math.min(14, Math.max(1, Number(days) || 2));
+  const token = (env && (env.CF_ANALYTICS_TOKEN || env.CLOUDFLARE_API_TOKEN)) || "";
+  const accountId = (env && (env.CLOUDFLARE_ACCOUNT_ID || env.CF_ACCOUNT_ID)) || "";
+  const scriptName = (env && env.CF_SCRIPT_NAME) || "cf-tg-web";
+  if (!token || !accountId) {
+    return { ok: false, error: "not_configured", source: "CF Analytics" };
+  }
+  const nowMs = Date.now();
+  if (_cfAnalyticsCache && _cfAnalyticsCache.days === nDays && (nowMs - _cfAnalyticsCache.ts) < CF_ANALYTICS_TTL_MS) {
+    return { ..._cfAnalyticsCache.payload, cached: true };
+  }
+
+  // 上海日期窗口 → UTC ISO（GraphQL 用 UTC）。CF 区块只展示「今天」，窗口收敛到今天一天，
+  // 省出站 subrequest 返回量、降低触顶 1 万行被采样的概率（昨日数据前端不需要）。
+  const nowSec = Math.floor(nowMs / 1000);
+  const todaySh = shanghaiBucket(nowSec, false);
+  const startUtcMs = Date.parse(todaySh + "T00:00:00+08:00");
+  const endUtcMs = startUtcMs + 86400000; // 今天上海 24:00
+  if (!Number.isFinite(startUtcMs) || !Number.isFinite(endUtcMs)) {
+    return { ok: false, error: "bad_date_window", source: "CF Analytics" };
+  }
+  const datetimeStart = new Date(startUtcMs).toISOString();
+  const datetimeEnd = new Date(endUtcMs - 1).toISOString(); // 闭区间防溢出到次日
+
+  // $x 是 GraphQL 变量占位，不是 JS 模板插值；query 体内不含 ${ }
+  const query =
+    "query GetWorkersAnalytics($accountTag: string, $datetimeStart: string, $datetimeEnd: string, $scriptName: string) {" +
+    "  viewer {" +
+    "    accounts(filter: {accountTag: $accountTag}) {" +
+    "      workersInvocationsAdaptive(limit: " + CF_ANALYTICS_LIMIT + ", filter: {" +
+    "        scriptName: $scriptName," +
+    "        datetime_geq: $datetimeStart," +
+    "        datetime_leq: $datetimeEnd" +
+    "      }) {" +
+    "        sum { requests subrequests errors }" +
+    "        dimensions { datetime scriptName status }" +
+    "      }" +
+    "    }" +
+    "  }" +
+    "}";
+
+  try {
+    const resp = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        variables: { accountTag: accountId, datetimeStart, datetimeEnd, scriptName },
+      }),
+    });
+    if (!resp.ok) {
+      return { ok: false, error: "cf_http_" + resp.status, source: "CF Analytics" };
+    }
+    const body = await resp.json();
+    if (body && body.success === false) {
+      const msg = Array.isArray(body.errors) && body.errors[0] && body.errors[0].message;
+      return { ok: false, error: "cf_graphql: " + (msg || "errors"), source: "CF Analytics" };
+    }
+    const acct = (((body && body.data && body.data.viewer && body.data.viewer.accounts) || [])[0]) || {};
+    const rows = (acct && acct.workersInvocationsAdaptive) || [];
+
+    // 聚合到「今天（上海日）」
+    const byHour = Array.from({ length: 24 }, (_, h) => ({ hour: h, count: 0 }));
+    const statusMap = {};
+    let todayTotal = 0;
+    for (const row of rows) {
+      const tsMs = Date.parse((row.dimensions && row.dimensions.datetime) || "");
+      if (!Number.isFinite(tsMs)) continue;
+      const { day, hour } = shanghaiNowParts(Math.floor(tsMs / 1000));
+      if (day !== todaySh) continue;
+      const n = Number((row.sum && row.sum.requests) || 0);
+      todayTotal += n;
+      if (hour >= 0 && hour < 24) byHour[hour].count += n;
+      const st = String((row.dimensions && row.dimensions.status) || "unknown");
+      statusMap[st] = (statusMap[st] || 0) + n;
+    }
+    const by_status = Object.entries(statusMap)
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count);
+    let peak_hour = 0, peak_count = 0;
+    for (const x of byHour) {
+      if (x.count > peak_count) { peak_count = x.count; peak_hour = x.hour; }
+    }
+    const payload = {
+      ok: true,
+      today: todaySh,
+      today_total: todayTotal,
+      by_hour: byHour,
+      peak_hour,
+      peak_count,
+      by_status,
+      sampled: rows.length >= CF_ANALYTICS_LIMIT,
+      source: "CF Analytics",
+      cached_at: nowMs,
+      cache_ttl_ms: CF_ANALYTICS_TTL_MS,
+    };
+    _cfAnalyticsCache = { ts: nowMs, days: nDays, payload };
+    return payload;
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e), source: "CF Analytics" };
+  }
 }
 
 async function getUiPrefs(env) {
@@ -3983,21 +4100,36 @@ textarea:focus{border-color:var(--accent)}
       <div class="list-head">
         <h2>Worker 调用用量</h2>
         <div class="list-head-actions">
-          <button type="button" class="primary" onclick="loadUsageStats()">刷新用量</button>
+          <button type="button" class="primary" onclick="loadUsageStats(true)">刷新用量</button>
         </div>
       </div>
       <p class="muted" style="margin:0 0 12px;line-height:1.55">
-        统计本 Worker 请求路径分布，用于排查额度突增（上报、看板刷新或外部扫描）。
-        内存聚合后批量写入 D1，尽量少占免费额度。时区 Asia/Shanghai。
+        双源对照：上方 <b>CF 官方统计</b>（权威，含定时任务 cron，约 10 分钟刷新一次）；下方 <b>本机自计数</b>（路径分布，近似下限，≤1 小时延迟）。时区 Asia/Shanghai。
       </p>
-      <div class="cards" id="usageSummaryCards"><div class="card"><div class="label">加载中</div><div class="val">…</div></div></div>
-      <div class="panel" style="margin:12px 0;padding:12px">
-        <h2 style="margin-bottom:8px">今日按小时</h2>
-        <div class="chart-wrap" style="height:220px"><canvas id="usageHourChart"></canvas></div>
+
+      <!-- CF 官方 Analytics -->
+      <div class="panel" style="margin:0 0 12px;padding:12px;background:var(--panel2)">
+        <h2 style="margin-bottom:4px">CF 官方统计</h2>
+        <div class="muted" style="margin-bottom:8px;font-size:12px">来源：Cloudflare GraphQL Analytics（workersInvocationsAdaptive）。含 cron/scheduled，权威总量。</div>
+        <div id="usageCfStatus" class="muted" style="margin-bottom:8px"></div>
+        <div class="cards" id="usageCfCards"><div class="card"><div class="label">加载中</div><div class="val">…</div></div></div>
+        <div class="chart-wrap" style="height:200px;margin-top:10px"><canvas id="usageCfHourChart"></canvas></div>
+        <div style="overflow:auto;margin-top:10px">
+          <table>
+            <thead><tr><th>执行状态</th><th>请求数</th></tr></thead>
+            <tbody id="usageCfStatusBody"><tr><td colspan="2">加载中…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="usageCfTips" class="muted" style="margin-top:10px;line-height:1.55"></div>
       </div>
+
+      <!-- 本机自计数（近似） -->
       <div class="panel" style="margin:0;padding:12px">
-        <h2 style="margin-bottom:8px">今日路径 TOP</h2>
-        <div style="overflow:auto">
+        <h2 style="margin-bottom:4px">本机自计数 <span class="muted" style="font-size:12px;font-weight:normal">（近似 · 下限 · ≤1h 延迟）</span></h2>
+        <div class="muted" style="margin-bottom:8px;font-size:12px">来源：Worker 内存聚合后批量写 D1。可看路径分布，但 isolate 回收会漏计、cron 不计入，故为下限。</div>
+        <div class="cards" id="usageSummaryCards"><div class="card"><div class="label">加载中</div><div class="val">…</div></div></div>
+        <div class="chart-wrap" style="height:200px;margin-top:10px"><canvas id="usageHourChart"></canvas></div>
+        <div style="overflow:auto;margin-top:10px">
           <table>
             <thead><tr><th>方法</th><th>路径</th><th>次数</th><th>占比</th></tr></thead>
             <tbody id="usagePathBody"><tr><td colspan="4">加载中…</td></tr></tbody>
@@ -6705,101 +6837,201 @@ function updateLogsPager() {
 }
 
 let usageHourChart = null;
-async function loadUsageStats() {
+let usageCfHourChart = null;
+const USAGE_CACHE_KEY = "usage_cache_v2";
+const USAGE_CACHE_TTL = 5 * 60 * 1000;
+
+async function loadUsageStats(force) {
+  let data = null;
+  let fromCache = false;
+  if (!force) {
+    try {
+      const raw = localStorage.getItem(USAGE_CACHE_KEY);
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (c && c.ts && (Date.now() - c.ts) < USAGE_CACHE_TTL) { data = c.payload; fromCache = true; }
+      }
+    } catch {}
+  }
+  if (!data) {
+    try {
+      data = await api("/api/usage?days=2" + (force ? "&nocache=1" : ""));
+    } catch (e) {
+      toast("加载用量失败：" + (e && e.message ? e.message : e));
+      return;
+    }
+    if (data && data.ok) {
+      try { localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify({ ts: Date.now(), payload: data })); } catch {}
+    }
+  }
+  if (!data || !data.ok) {
+    const c0 = document.getElementById("usageSummaryCards");
+    if (c0) c0.innerHTML = '<div class="card"><div class="label">失败</div><div class="val">—</div></div>';
+    toast((data && data.error) || "加载用量失败");
+    return;
+  }
+  renderUsageSelf(data, fromCache);
+  renderUsageCf(data.cf || { ok: false, error: "missing" }, fromCache);
+}
+
+function renderUsageSelf(data, fromCache) {
   const cards = document.getElementById("usageSummaryCards");
   const body = document.getElementById("usagePathBody");
   const tipsEl = document.getElementById("usageTips");
-  if (cards) cards.innerHTML = '<div class="card"><div class="label">加载中</div><div class="val">…</div></div>';
-  try {
-    const data = await api("/api/usage?days=2");
-    if (!data || !data.ok) {
-      if (cards) cards.innerHTML = '<div class="card"><div class="label">失败</div><div class="val">—</div></div>';
-      toast((data && data.error) || "加载用量失败");
-      return;
-    }
-    const today = data.today || "—";
-    const todayTotal = Number(data.today_total) || 0;
-    const days = data.days || [];
-    const totals = data.totals || {};
-    const yday = days[1] || "";
-    const yTotal = yday ? (Number(totals[yday]) || 0) : 0;
-    const peakH = Number(data.peak_hour) || 0;
-    const peakC = Number(data.peak_count) || 0;
-    if (cards) {
-      cards.innerHTML = [
-        '<div class="card"><div class="label">今日请求</div><div class="val">' + todayTotal + '</div><div class="sub">' + today + '</div></div>',
-        '<div class="card"><div class="label">昨日请求</div><div class="val">' + yTotal + '</div><div class="sub">' + (yday || "—") + '</div></div>',
-        '<div class="card"><div class="label">今日峰值小时</div><div class="val">' + String(peakH).padStart(2,"0") + ':00</div><div class="sub">' + peakC + ' 次</div></div>',
-        '<div class="card"><div class="label">路径种类</div><div class="val">' + ((data.by_path || []).length) + '</div><div class="sub">TOP 列表见下</div></div>',
-      ].join("");
-    }
-    if (body) {
-      body.replaceChildren();
-      const rows = data.by_path || [];
-      if (!rows.length) {
+  const today = data.today || "—";
+  const todayTotal = Number(data.today_total) || 0;
+  const days = data.days || [];
+  const totals = data.totals || {};
+  const yday = days[1] || "";
+  const yTotal = yday ? (Number(totals[yday]) || 0) : 0;
+  const peakH = Number(data.peak_hour) || 0;
+  const peakC = Number(data.peak_count) || 0;
+  if (cards) {
+    cards.innerHTML = [
+      '<div class="card"><div class="label">今日请求（近似）</div><div class="val">' + todayTotal + '</div><div class="sub">' + today + '</div></div>',
+      '<div class="card"><div class="label">昨日请求（近似）</div><div class="val">' + yTotal + '</div><div class="sub">' + (yday || "—") + '</div></div>',
+      '<div class="card"><div class="label">今日峰值小时</div><div class="val">' + String(peakH).padStart(2,"0") + ':00</div><div class="sub">' + peakC + ' 次</div></div>',
+      '<div class="card"><div class="label">路径种类</div><div class="val">' + ((data.by_path || []).length) + '</div><div class="sub">TOP 列表见下</div></div>',
+    ].join("");
+  }
+  if (body) {
+    body.replaceChildren();
+    const rows = data.by_path || [];
+    if (!rows.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.textContent = "暂无数据（部署后产生请求才会累计）";
+      tr.appendChild(td);
+      body.appendChild(tr);
+    } else {
+      for (const r of rows) {
         const tr = document.createElement("tr");
-        const td = document.createElement("td");
-        td.colSpan = 4;
-        td.textContent = "暂无数据（部署后产生请求才会累计）";
-        tr.appendChild(td);
-        body.appendChild(tr);
-      } else {
-        for (const r of rows) {
-          const tr = document.createElement("tr");
-          const c = Number(r.count) || 0;
-          const pct = todayTotal > 0 ? ((c / todayTotal) * 100).toFixed(1) + "%" : "—";
-          for (const t of [r.method || "—", r.path || "—", String(c), pct]) {
-            const td = document.createElement("td");
-            td.textContent = t;
-            tr.appendChild(td);
-          }
-          body.appendChild(tr);
+        const c = Number(r.count) || 0;
+        const pct = todayTotal > 0 ? ((c / todayTotal) * 100).toFixed(1) + "%" : "—";
+        for (const t of [r.method || "—", r.path || "—", String(c), pct]) {
+          const td = document.createElement("td");
+          td.textContent = t;
+          tr.appendChild(td);
         }
+        body.appendChild(tr);
       }
     }
-    if (tipsEl) {
-      const tips = data.tips || [];
-      tipsEl.textContent = tips.length
-        ? ("提示：" + tips.join("；"))
-        : "提示：若某小时突增，对照路径 TOP 判断是上报、看板刷新还是外部扫描。";
+  }
+  if (tipsEl) {
+    const tips = data.tips || [];
+    let s = tips.length ? ("提示：" + tips.join("；")) : "提示：本机自计数为下限（漏 isolate、不含 cron），精确总量请看上方 CF 官方统计。";
+    if (fromCache) s += "（本地缓存，点"刷新用量"取新）";
+    tipsEl.textContent = s;
+  }
+  drawUsageBars("usageHourChart", "self", data.by_hour || [], "今日每小时请求（近似）");
+}
+
+function renderUsageCf(cf, fromCache) {
+  const status = document.getElementById("usageCfStatus");
+  const cards = document.getElementById("usageCfCards");
+  const body = document.getElementById("usageCfStatusBody");
+  const tipsEl = document.getElementById("usageCfTips");
+  if (!cf || !cf.ok) {
+    if (cards) cards.innerHTML = '<div class="card"><div class="label">未启用</div><div class="val">—</div></div>';
+    if (body) {
+      body.replaceChildren();
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 2;
+      td.textContent = "—";
+      tr.appendChild(td);
+      body.appendChild(tr);
     }
-    await whenChartReady();
-    const canvas = document.getElementById("usageHourChart");
-    if (canvas && typeof Chart !== "undefined") {
-      const byHour = data.by_hour || [];
-      const labels = byHour.map((x) => String(x.hour).padStart(2, "0"));
-      const vals = byHour.map((x) => Number(x.count) || 0);
-      const tc = themeChartColors();
-      if (usageHourChart) { try { usageHourChart.destroy(); } catch {} }
-      usageHourChart = new Chart(canvas, {
-        type: "bar",
-        data: {
-          labels,
-          datasets: [{
-            label: "请求次数",
-            data: vals,
-            backgroundColor: tc.rxSoft,
-            borderColor: tc.rx,
-            borderWidth: 1,
-            borderRadius: 3,
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { ticks: { color: tc.muted, maxTicksLimit: 12 }, grid: { display: false } },
-            y: { beginAtZero: true, ticks: { color: tc.muted }, grid: { color: tc.grid } },
-          },
-          plugins: {
-            legend: { display: false },
-            title: { display: true, text: "今日每小时请求量", color: tc.text },
-          },
-        },
-      });
+    let why = (cf && cf.error) || "未知";
+    if (why === "not_configured") why = "未配置 CF_ANALYTICS_TOKEN / CLOUDFLARE_ACCOUNT_ID（在 Worker 加密变量中添加，可选），仅显示下方自计数。";
+    if (status) status.textContent = why;
+    if (tipsEl) tipsEl.textContent = "";
+    drawUsageBars("usageCfHourChart", "cf", [], "CF 官方每小时请求");
+    return;
+  }
+  const todayTotal = Number(cf.today_total) || 0;
+  const peakH = Number(cf.peak_hour) || 0;
+  const peakC = Number(cf.peak_count) || 0;
+  const byStatus = cf.by_status || [];
+  if (cards) {
+    cards.innerHTML = [
+      '<div class="card"><div class="label">今日请求（权威）</div><div class="val">' + todayTotal + '</div><div class="sub">' + (cf.today || "—") + '</div></div>',
+      '<div class="card"><div class="label">今日峰值小时</div><div class="val">' + String(peakH).padStart(2,"0") + ':00</div><div class="sub">' + peakC + ' 次</div></div>',
+      '<div class="card"><div class="label">执行状态种类</div><div class="val">' + byStatus.length + '</div><div class="sub">见下表</div></div>',
+    ].join("");
+  }
+  if (body) {
+    body.replaceChildren();
+    if (!byStatus.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 2;
+      td.textContent = "暂无";
+      tr.appendChild(td);
+      body.appendChild(tr);
+    } else {
+      for (const r of byStatus) {
+        const tr = document.createElement("tr");
+        const c = Number(r.count) || 0;
+        const pct = todayTotal > 0 ? ((c / todayTotal) * 100).toFixed(1) + "%" : "—";
+        for (const t of [r.status || "—", String(c) + " (" + pct + ")"]) {
+          const td = document.createElement("td");
+          td.textContent = t;
+          tr.appendChild(td);
+        }
+        body.appendChild(tr);
+      }
     }
-  } catch (e) {
-    toast("加载用量失败：" + (e && e.message ? e.message : e));
+  }
+  let note = "含 fetch 与 scheduled（cron）调用；约 10 分钟更新一次。";
+  if (cf.sampled) note += " 行数触顶 1 万，可能为采样下限。";
+  if (cf.cached) note += " 本次为服务端缓存。";
+  if (fromCache) note += "（本地缓存，点"刷新用量"取新）";
+  if (status) status.textContent = note;
+  if (tipsEl) {
+    tipsEl.textContent = (todayTotal > 0 && peakC >= Math.max(50, todayTotal * 0.25))
+      ? ("峰值小时 " + String(peakH).padStart(2,"0") + ":00 占比较高，可对照下方自计数路径 TOP 判断来源。")
+      : "";
+  }
+  drawUsageBars("usageCfHourChart", "cf", cf.by_hour || [], "CF 官方每小时请求");
+}
+
+async function drawUsageBars(canvasId, which, byHour, title) {
+  await whenChartReady();
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || typeof Chart === "undefined") return;
+  const labels = byHour.map((x) => String(x.hour).padStart(2, "0"));
+  const vals = byHour.map((x) => Number(x.count) || 0);
+  const tc = themeChartColors();
+  if (which === "cf") {
+    if (usageCfHourChart) { try { usageCfHourChart.destroy(); } catch {} }
+    usageCfHourChart = new Chart(canvas, {
+      type: "bar",
+      data: { labels, datasets: [{ label: "请求次数", data: vals, backgroundColor: tc.txSoft, borderColor: tc.tx, borderWidth: 1, borderRadius: 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: tc.muted, maxTicksLimit: 12 }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: tc.muted }, grid: { color: tc.grid } },
+        },
+        plugins: { legend: { display: false }, title: { display: true, text: title, color: tc.text } },
+      },
+    });
+  } else {
+    if (usageHourChart) { try { usageHourChart.destroy(); } catch {} }
+    usageHourChart = new Chart(canvas, {
+      type: "bar",
+      data: { labels, datasets: [{ label: "请求次数", data: vals, backgroundColor: tc.rxSoft, borderColor: tc.rx, borderWidth: 1, borderRadius: 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: tc.muted, maxTicksLimit: 12 }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: tc.muted }, grid: { color: tc.grid } },
+        },
+        plugins: { legend: { display: false }, title: { display: true, text: title, color: tc.text } },
+      },
+    });
   }
 }
 
@@ -8014,12 +8246,23 @@ export default {
       return json(result);
     }
 
-    // GET /api/usage — Worker 调用用量分析（登录后）
+    // GET /api/usage — Worker 调用用量分析（登录后）；双源：自计数（近似）+ CF 官方 Analytics
     if (req.method === "GET" && url.pathname === "/api/usage") {
       if (!(await requireDash(req, env))) return json({ ok: false, error: "unauthorized" }, 401);
       try {
         const days = Number(url.searchParams.get("days") || 2);
-        return json(await getApiUsageSummary(env, { days }));
+        const noCache = url.searchParams.get("nocache") === "1";
+        const nowMs = Date.now();
+        if (!noCache && _usageRespCache && _usageRespCache.days === days && (nowMs - _usageRespCache.ts) < USAGE_RESP_TTL_MS) {
+          return json({ ..._usageRespCache.payload, cached: true });
+        }
+        const [self, cf] = await Promise.all([
+          getApiUsageSummary(env, { days }),
+          getCfAnalyticsSummary(env, { days }),
+        ]);
+        const payload = { ...self, cf, server_cached_at: nowMs, server_ttl_ms: USAGE_RESP_TTL_MS };
+        _usageRespCache = { ts: nowMs, days, payload };
+        return json(payload);
       } catch (e) {
         return json({ ok: false, error: String(e && e.message ? e.message : e) }, 500);
       }

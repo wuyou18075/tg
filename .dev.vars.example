@@ -16,3 +16,11 @@ PASSWORD = "change-me-please"
 
 # 可选：Telegram 聊天/群 ID
 # TG_ID = "-1001234567890"
+
+# 可选：「用量」页 CF 官方统计（只读）。不填则该页只显示本机自计数。
+# CF_ANALYTICS_TOKEN：CF API Token，权限只需「帐户 - 帐户分析 - 读取」+「Workers Observability - 读取」。
+# CLOUDFLARE_ACCOUNT_ID：帐户 ID（CF Dashboard 右下可见）。
+# CF_SCRIPT_NAME：Worker 名称，默认 cf-tg-web；改过 Worker 名才需要设。
+# CF_ANALYTICS_TOKEN = "v1.0-..."
+# CLOUDFLARE_ACCOUNT_ID = "abcd1234..."
+# CF_SCRIPT_NAME = "cf-tg-web"

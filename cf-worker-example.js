@@ -620,20 +620,44 @@ function shanghaiHourLabelOffset(i) {
   return shanghaiHourBucket(Math.floor(utcMs / 1000));
 }
 
+/** 上海自然日 [startSec, endSec) 与 day 标签 */
+function shanghaiDayRange(dayStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dayStr || "").trim());
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  // 上海 00:00 = 该日历日 UTC 00:00 减 8 小时
+  const startMs = Date.UTC(y, mo - 1, d, 0, 0, 0) - 8 * 3600 * 1000;
+  const endMs = startMs + 24 * 3600 * 1000;
+  const day = y + "-" + String(mo).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+  return { day, startSec: Math.floor(startMs / 1000), endSec: Math.floor(endMs / 1000) };
+}
+
 /**
- * 日内折线：近 span 小时内，各整点「当日累计用量」(today_rx/tx)
- *  - 线只升不平降（同日累计）；跨自然日会从新一天的累计重新起
+ * 日内折线：选定上海自然日 day=YYYY-MM-DD，仅 0–23 点，禁止跨日
+ *  - 各整点「当日累计用量」today_rx/tx（同日只升/持平）
  *  - mid 空 = 全部机器求和
- *  - 无数据的小时向前填充上一个已知累计，避免断崖乱跳
+ *  - 无数据的小时向前填充上一个已知累计
  */
-async function getHistoryHourly(env, { mid, span }) {
-  const n = Math.min(72, Math.max(6, Number(span) || 24));
+async function getHistoryHourly(env, { mid, day }) {
   const now = Math.floor(Date.now() / 1000);
-  const since = now - n * 3600 - 3600; // 多取 1h 便于跨边界对齐
+  const today = shanghaiBucket(now, false);
+  let dayStr = String(day || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) dayStr = today;
+  const range = shanghaiDayRange(dayStr);
+  if (!range) {
+    return { mode: "hour", day: today, machine_id: mid || null, points: [], series: "cumulative_today" };
+  }
+  const { startSec, endSec } = range;
+  // 固定 24 个整点：day 00:00 … day 23:00（绝不跨到下一天）
+  const labels = [];
+  for (let h = 0; h < 24; h++) {
+    labels.push(dayStr + " " + String(h).padStart(2, "0") + ":00");
+  }
 
   let sql = `SELECT machine_id, ts, today_rx, today_tx
-             FROM snapshots WHERE ts >= ?`;
-  const binds = [since];
+             FROM snapshots WHERE ts >= ? AND ts < ?`;
+  const binds = [startSec, endSec];
   if (mid) {
     sql += ` AND machine_id = ?`;
     binds.push(mid);
@@ -642,25 +666,21 @@ async function getHistoryHourly(env, { mid, span }) {
   const { results } = await env.DB.prepare(sql).bind(...binds).all();
   const rows = results || [];
 
-  // 每机每小时取最后一条「当日累计」
-  const lastByHourMid = new Map(); // hour|mid -> {hour, mid, day, rx, tx}
+  // 每机每小时取最后一条「当日累计」（仅该日）
+  const lastByHourMid = new Map(); // hour|mid -> {hour, mid, rx, tx}
   for (const r of rows) {
     const ts = Number(r.ts) || 0;
+    // 双保险：bucket 日必须等于选定日
     const hour = shanghaiHourBucket(ts);
-    const day = shanghaiBucket(ts, false);
+    if (!hour.startsWith(dayStr + " ")) continue;
     const k = hour + "|" + r.machine_id;
     lastByHourMid.set(k, {
-      hour, mid: r.machine_id, day,
+      hour, mid: r.machine_id,
       rx: Number(r.today_rx) || 0,
       tx: Number(r.today_tx) || 0,
     });
   }
 
-  // 时间轴：近 n 小时（含当前小时）
-  const labels = [];
-  for (let i = n - 1; i >= 0; i--) labels.push(shanghaiHourLabelOffset(i));
-
-  // 按机：把稀疏小时点对齐到完整 labels，同日内向前填充累计，保证不降
   const machineIds = new Set();
   for (const v of lastByHourMid.values()) machineIds.add(v.mid);
 
@@ -668,66 +688,68 @@ async function getHistoryHourly(env, { mid, span }) {
   for (const lab of labels) totalByHour.set(lab, { rx: 0, tx: 0 });
 
   for (const mId of machineIds) {
-    // 该机在 labels 上的累计序列
-    let lastRx = 0, lastTx = 0, lastDay = "";
+    let lastRx = 0, lastTx = 0;
     for (const lab of labels) {
       const hit = lastByHourMid.get(lab + "|" + mId);
-      const day = lab.slice(0, 10); // YYYY-MM-DD
       if (hit) {
-        if (lastDay && hit.day !== lastDay) {
-          // 跨日：从新一天累计重新起（可从较小值开始，这是自然日重置，不是抖动）
-          lastRx = Math.max(0, hit.rx);
-          lastTx = Math.max(0, hit.tx);
-        } else {
-          // 同日：累计只增不减
-          lastRx = Math.max(lastRx, hit.rx);
-          lastTx = Math.max(lastTx, hit.tx);
-        }
-        lastDay = hit.day;
-      } else if (lastDay && day !== lastDay) {
-        // 无点且已跨日：新一天尚未有数据，记 0
-        lastRx = 0;
-        lastTx = 0;
-        lastDay = day;
-      } else if (!lastDay) {
-        lastDay = day;
+        // 同日累计只增不减
+        lastRx = Math.max(lastRx, hit.rx);
+        lastTx = Math.max(lastTx, hit.tx);
       }
-      // 无 hit 且同日：沿用 lastRx/lastTx（前向填充）
+      // 无 hit：前向填充
       const acc = totalByHour.get(lab);
       acc.rx += lastRx;
       acc.tx += lastTx;
     }
   }
 
-  // 叠加 machines 表「当前今日累计」到最后一个桶，保证与列表今日一致
-  try {
-    let liveSql = `SELECT machine_id, today_rx, today_tx, last_ts FROM machines`;
-    const liveBinds = [];
-    if (mid) {
-      liveSql += ` WHERE machine_id = ?`;
-      liveBinds.push(mid);
-    }
-    const live = liveBinds.length
-      ? await env.DB.prepare(liveSql).bind(...liveBinds).all()
-      : await env.DB.prepare(liveSql).all();
-    const lastLab = labels[labels.length - 1];
-    if (lastLab) {
+  // 仅当选的是「今天」时，用 machines 实时值覆盖当前小时及之后（未来小时=当前累计）
+  if (dayStr === today) {
+    try {
+      let liveSql = `SELECT machine_id, today_rx, today_tx FROM machines`;
+      const liveBinds = [];
+      if (mid) {
+        liveSql += ` WHERE machine_id = ?`;
+        liveBinds.push(mid);
+      }
+      const live = liveBinds.length
+        ? await env.DB.prepare(liveSql).bind(...liveBinds).all()
+        : await env.DB.prepare(liveSql).all();
+      const curHour = shanghaiHourBucket(now);
+      const hourLab = labels.includes(curHour) ? curHour : null;
       let rx = 0, tx = 0;
       for (const r of live.results || []) {
         rx += Number(r.today_rx) || 0;
         tx += Number(r.today_tx) || 0;
       }
-      // 用 live 覆盖最后一桶的合计（更贴近实时）
-      const prev = totalByHour.get(lastLab) || { rx: 0, tx: 0 };
-      totalByHour.set(lastLab, { rx: Math.max(prev.rx, rx), tx: Math.max(prev.tx, tx) });
-    }
-  } catch { /* ignore */ }
+      if (hourLab) {
+        const prev = totalByHour.get(hourLab) || { rx: 0, tx: 0 };
+        totalByHour.set(hourLab, { rx: Math.max(prev.rx, rx), tx: Math.max(prev.tx, tx) });
+        const idx = labels.indexOf(hourLab);
+        // 今天尚未到达的小时：显示截至当前的累计（同日过程中尚未增长）
+        for (let i = idx; i < labels.length; i++) {
+          const prevH = totalByHour.get(labels[i]) || { rx: 0, tx: 0 };
+          totalByHour.set(labels[i], {
+            rx: Math.max(prevH.rx, rx),
+            tx: Math.max(prevH.tx, tx),
+          });
+        }
+      }
+    } catch { /* ignore */ }
+  }
 
   const points = labels.map((bucket) => {
     const v = totalByHour.get(bucket) || { rx: 0, tx: 0 };
     return { bucket, rx: v.rx, tx: v.tx, total: v.rx + v.tx };
   });
-  return { mode: "hour", span: n, machine_id: mid || null, points, series: "cumulative_today" };
+  return {
+    mode: "hour",
+    day: dayStr,
+    span: 24,
+    machine_id: mid || null,
+    points,
+    series: "cumulative_today",
+  };
 }
 
 /** 日/月聚合：单机 mid 或全部（mid 空）。
@@ -1708,6 +1730,7 @@ const UI_PREF_DEFAULTS = {
   theme: "prairie",
   chart_mode: "week",
   chart_span_hour: "24",
+  chart_day_hour: "",
   chart_span_week: "7",
   chart_span_month: "31",
   chart_span_year: "12",
@@ -4206,7 +4229,7 @@ function asChartData(data) {
  *  周报=按日；月报=按日可选天数；年报=按月；日内=小时折线
  */
 const CHART_PRESETS = {
-  hour:  { api: "hour",  span: 24, chart: "line", title: "日内累计", desc: "近 N 小时各整点的当日累计用量（只升不平降；跨日重置）" },
+  hour:  { api: "hour",  span: 24, chart: "line", title: "日内累计", desc: "选定自然日 0–24 点累计折线（不跨日）" },
   week:  { api: "day",   span: 7,  chart: "bar",  title: "周报", desc: "按日累计柱状（可选近 7/14 天）" },
   month: { api: "day",   span: 31, chart: "bar",  title: "月报", desc: "按日累计柱状（最长近 31 天）" },
   year:  { api: "month", span: 12, chart: "bar",  title: "年报", desc: "按月累计柱状（可选近 6/12/24 月）" },
@@ -4219,10 +4242,10 @@ function normalizeChartMode(m) {
 function chartPreset(mode) {
   return CHART_PRESETS[normalizeChartMode(mode)] || CHART_PRESETS.week;
 }
-/** 各模式下可选跨度 */
+/** 各模式下可选跨度（日内改用日期下拉，见 fillRangeOptions） */
 function rangeOptionsFor(mode) {
   mode = normalizeChartMode(mode);
-  if (mode === "hour") return [["12","近 12 小时"],["24","近 24 小时"],["48","近 48 小时"],["72","近 72 小时"]];
+  if (mode === "hour") return hourDayOptions();
   if (mode === "week") return [["7","近 7 天"],["14","近 14 天"]];
   // 月报按「一个自然月」口径，最长 31 天
   if (mode === "month") return [["7","近 7 天"],["14","近 14 天"],["31","近 31 天"]];
@@ -4232,22 +4255,67 @@ function rangeOptionsFor(mode) {
 function clampSpan(mode, span) {
   const n = Math.max(1, Number(span) || 0);
   mode = normalizeChartMode(mode);
-  if (mode === "hour") return Math.min(72, n || 24);
+  if (mode === "hour") return 24; // 固定一天 24 点
   if (mode === "week") return Math.min(14, n || 7);
   if (mode === "month") return Math.min(31, n || 31); // 月报最大 31 天
   if (mode === "year") return Math.min(24, n || 12);
   return n || 7;
 }
-function chartTitleWithSpan(mode, span) {
+/** 上海时区「今天」YYYY-MM-DD（浏览器本地计算） */
+function shanghaiTodayStr() {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+}
+/** 日内日期下拉：近 31 个上海自然日（含今天） */
+function hourDayOptions() {
+  const today = shanghaiTodayStr();
+  const parts = today.split("-").map(Number);
+  const y = parts[0], m = parts[1], d = parts[2];
+  // 用上海正午对应的 UTC 近似做日历回退（上海无夏令时）
+  const noonUtc = Date.UTC(y, m - 1, d, 4, 0, 0);
+  const out = [];
+  for (let i = 0; i < 31; i++) {
+    const t = new Date(noonUtc - i * 86400000);
+    // 格式化为上海日历日
+    const label = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(t);
+    const text = i === 0 ? (label + "（今天）") : label;
+    out.push([label, text]);
+  }
+  return out;
+}
+function chartTitleWithSpan(mode, spanOrDay) {
   const p = chartPreset(mode);
-  const n = Number(span) || p.span;
-  if (mode === "hour") return p.title + " · 近 " + n + " 小时";
+  if (mode === "hour") {
+    const day = String(spanOrDay || shanghaiTodayStr());
+    return p.title + " · " + day + " · 0–24 点";
+  }
+  const n = Number(spanOrDay) || p.span;
   if (mode === "year") return p.title + " · 近 " + n + " 月";
   return p.title + " · 近 " + n + " 天";
 }
 function readSpan(selId, mode) {
   const p = chartPreset(mode);
   const el = document.getElementById(selId);
+  if (mode === "hour") {
+    // 返回日期字符串 YYYY-MM-DD
+    const v = el ? String(el.value || "").trim() : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    try {
+      const saved = localStorage.getItem("dash_chart_day_hour");
+      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) return saved;
+    } catch {}
+    return shanghaiTodayStr();
+  }
   const v = el ? Number(el.value) : NaN;
   const raw = (Number.isFinite(v) && v > 0) ? v : p.span;
   return clampSpan(mode, raw);
@@ -4381,6 +4449,7 @@ function collectUiPrefs() {
     theme: theme,
     chart_mode: chartMode || "week",
     chart_span_hour: "24",
+    chart_day_hour: shanghaiTodayStr(),
     chart_span_week: "7",
     chart_span_month: "31",
     chart_span_year: "12",
@@ -4397,14 +4466,19 @@ function collectUiPrefs() {
     logs_page_size: String(logsPageSize || 20),
   };
   try {
-    prefs.chart_span_hour = localStorage.getItem("dash_chart_span_hour") || "24";
+    prefs.chart_span_hour = "24";
+    prefs.chart_day_hour = localStorage.getItem("dash_chart_day_hour") || shanghaiTodayStr();
     prefs.chart_span_week = localStorage.getItem("dash_chart_span_week") || "7";
     prefs.chart_span_month = localStorage.getItem("dash_chart_span_month") || "31";
     prefs.chart_span_year = localStorage.getItem("dash_chart_span_year") || "12";
   } catch {}
   if (r && r.value) {
-    const key = "chart_span_" + (chartMode || "week");
-    if (prefs[key] != null) prefs[key] = String(r.value);
+    if (chartMode === "hour") {
+      prefs.chart_day_hour = String(r.value);
+    } else {
+      const key = "chart_span_" + (chartMode || "week");
+      if (prefs[key] != null) prefs[key] = String(r.value);
+    }
   }
   return prefs;
 }
@@ -4423,6 +4497,7 @@ function writeUiPrefsLocal(prefs) {
       const k = "chart_span_" + m;
       if (prefs[k] != null) localStorage.setItem("dash_chart_span_" + m, String(prefs[k]));
     }
+    if (prefs.chart_day_hour) localStorage.setItem("dash_chart_day_hour", String(prefs.chart_day_hour));
     if (prefs.chart_rx != null) localStorage.setItem("dash_chart_rx", prefs.chart_rx === "0" ? "0" : "1");
     if (prefs.chart_tx != null) localStorage.setItem("dash_chart_tx", prefs.chart_tx === "0" ? "0" : "1");
     if (prefs.filter_online != null) localStorage.setItem("dash_filter_online", prefs.filter_online === "1" ? "1" : "0");
@@ -5272,19 +5347,37 @@ async function batchAction(action) {
 function fillRangeOptions(sel, mode) {
   if (!sel) return;
   mode = normalizeChartMode(mode);
-  const opts = rangeOptionsFor(mode);
   const p = chartPreset(mode);
-  let prefer = null;
-  try { prefer = localStorage.getItem("dash_chart_span_" + mode); } catch { /* ignore */ }
-  const cur = prefer || sel.value || String(p.span);
   sel.disabled = false;
   sel.replaceChildren();
+  if (mode === "hour") {
+    // 日内：选上海自然日，不跨日
+    const opts = hourDayOptions();
+    let prefer = null;
+    try { prefer = localStorage.getItem("dash_chart_day_hour"); } catch { /* ignore */ }
+    const today = shanghaiTodayStr();
+    const cur = (prefer && opts.some(x => x[0] === prefer)) ? prefer : today;
+    for (const [v, t] of opts) {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = t;
+      sel.appendChild(o);
+    }
+    sel.value = cur;
+    return;
+  }
+  const opts = rangeOptionsFor(mode);
+  let prefer = null;
+  try { prefer = localStorage.getItem("dash_chart_span_" + mode); } catch { /* ignore */ }
+  // 只使用本 mode 自己记住的跨度；不要沿用上一个 mode 的 sel.value（周报的 7 会误进月报）
+  const cur = (prefer && opts.some(x => x[0] === String(prefer)))
+    ? String(prefer)
+    : String(p.span);
   for (const [v, t] of opts) {
     const o = document.createElement("option");
     o.value = v; o.textContent = t;
     sel.appendChild(o);
   }
-  sel.value = opts.some(x => x[0] === String(cur)) ? String(cur) : String(p.span);
+  sel.value = cur;
 }
 
 function saveChartPrefs() {
@@ -5293,7 +5386,10 @@ function saveChartPrefs() {
     const rx = document.getElementById("chkRx");
     const tx = document.getElementById("chkTx");
     localStorage.setItem("dash_chart_mode", chartMode);
-    if (r && r.value) localStorage.setItem("dash_chart_span_" + chartMode, r.value);
+    if (r && r.value) {
+      if (chartMode === "hour") localStorage.setItem("dash_chart_day_hour", r.value);
+      else localStorage.setItem("dash_chart_span_" + chartMode, r.value);
+    }
     if (rx) localStorage.setItem("dash_chart_rx", rx.checked ? "1" : "0");
     if (tx) localStorage.setItem("dash_chart_tx", tx.checked ? "1" : "0");
   } catch { /* ignore */ }
@@ -5863,8 +5959,14 @@ async function loadHistory() {
   if (!isChartPanelVisible()) return;
   try {
     const p = chartPreset(chartMode);
-    const span = readSpan("range", chartMode);
-    const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
+    let q = "/api/history?mode=" + p.api;
+    if (chartMode === "hour") {
+      const day = readSpan("range", "hour"); // YYYY-MM-DD
+      q += "&day=" + encodeURIComponent(day);
+    } else {
+      const span = readSpan("range", chartMode);
+      q += "&span=" + encodeURIComponent(span);
+    }
     const data = await api(q);
     mainPoints = asChartData(data);
     await whenChartReady();
@@ -5900,9 +6002,14 @@ async function loadHistModal() {
   if (!histMid) return;
   try {
     const p = chartPreset(histMode);
-    const span = readSpan("histRange", histMode);
-    const q = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span)
-      + "&mid=" + encodeURIComponent(histMid);
+    let q = "/api/history?mode=" + p.api + "&mid=" + encodeURIComponent(histMid);
+    if (histMode === "hour") {
+      const day = readSpan("histRange", "hour");
+      q += "&day=" + encodeURIComponent(day);
+    } else {
+      const span = readSpan("histRange", histMode);
+      q += "&span=" + encodeURIComponent(span);
+    }
     const data = await api(q);
     histPoints = asChartData(data);
     await whenChartReady();
@@ -5976,8 +6083,14 @@ async function refresh(opts = {}) {
   _refreshInFlight = (async () => {
     try {
       const p = chartPreset(chartMode);
-      const span = readSpan("range", chartMode);
-      const histQ = "/api/history?mode=" + p.api + "&span=" + encodeURIComponent(span);
+      let histQ = "/api/history?mode=" + p.api;
+      if (chartMode === "hour") {
+        const day = readSpan("range", "hour");
+        histQ += "&day=" + encodeURIComponent(day);
+      } else {
+        const span = readSpan("range", chartMode);
+        histQ += "&span=" + encodeURIComponent(span);
+      }
 
       const tasks = [api("/api/machines")];
       if (wantHistory) tasks.push(api(histQ));
@@ -7343,23 +7456,28 @@ export default {
       }
     }
 
-    // GET /api/history — mode=hour|day|month, span=小时/天数/月数, mid 可选（空=全部合计）
+    // GET /api/history — mode=hour|day|month；hour 用 day=YYYY-MM-DD；day/month 用 span
     if (req.method === "GET" && url.pathname === "/api/history") {
       if (!env.DB) return json({ ok: true, points: [] });
       const mid = String(url.searchParams.get("mid") || "").trim();
       const modeRaw = String(url.searchParams.get("mode") || "day").toLowerCase();
       const mode = modeRaw === "month" ? "month" : modeRaw === "hour" ? "hour" : "day";
-      const span = Number(url.searchParams.get("span") || url.searchParams.get("hours") || (mode === "month" ? 6 : mode === "hour" ? 24 : 14));
       if (mid && !isValidMachineId(mid)) return json({ ok: false, error: "mid invalid" }, 400);
       // 兼容旧 hours 参数：有 mid 且无 mode 时仍可返回原始点
-      if (mid && url.searchParams.has("hours") && !url.searchParams.has("mode") && !url.searchParams.has("span")) {
+      if (mid && url.searchParams.has("hours") && !url.searchParams.has("mode") && !url.searchParams.has("span") && !url.searchParams.has("day")) {
         const hours = Math.min(24 * 90, Math.max(1, Number(url.searchParams.get("hours") || 168)));
         return json({ ok: true, machine_id: mid, hours, points: await getHistory(env, mid, hours) });
       }
       if (mode === "hour") {
-        const agg = await getHistoryHourly(env, { mid: mid || null, span });
+        // 日内：必须指定上海自然日 day=YYYY-MM-DD，仅 0–23 点，禁止跨日
+        let day = String(url.searchParams.get("day") || "").trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+          day = shanghaiBucket(Math.floor(Date.now() / 1000), false);
+        }
+        const agg = await getHistoryHourly(env, { mid: mid || null, day });
         return json({ ok: true, ...agg });
       }
+      const span = Number(url.searchParams.get("span") || url.searchParams.get("hours") || (mode === "month" ? 6 : 14));
       const agg = await getHistoryAgg(env, { mid: mid || null, mode, span });
       return json({ ok: true, ...agg });
     }

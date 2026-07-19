@@ -1,7 +1,7 @@
-/* theme token: 墨夜（noir）— 外层中灰底 + 深色面板 / 柔靛蓝 */
+/* theme token: 墨夜（noir）— 外层浅黑底 + 深色面板 / 柔靛蓝 */
 html[data-theme="noir"]{
   color-scheme:dark;
-  --bg:#a8a8b4;
+  --bg:#2a2a32;
   --bg2:#0c0c0f;
   --panel:#121216;
   --panel2:#0e0e12;
@@ -32,6 +32,6 @@ html[data-theme="noir"]{
   --grid:#1c1c24;
   --glow:rgba(129,140,248,.10);
   --header-glow:linear-gradient(90deg,rgba(129,140,248,.08),transparent 65%);
-  /* 最外层页面底：中灰（卡片/面板仍保持深色） */
-  --body-bg:#a8a8b4;
+  /* 最外层页面底：浅黑（卡片/面板仍更深） */
+  --body-bg:#2a2a32;
 }

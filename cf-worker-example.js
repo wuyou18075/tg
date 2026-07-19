@@ -2989,10 +2989,10 @@ html[data-theme="cyber"] button.primary{color:#fffaf0}
 html[data-theme="cyber"] .nav a{color:var(--muted)}
 html[data-theme="cyber"] .nav a.active,html[data-theme="cyber"] .nav a:hover{color:var(--text);background:var(--hover)}
 
-/* theme token: 墨夜（noir）— 外层淡灰底 + 深色面板 / 柔靛蓝 */
+/* theme token: 墨夜（noir）— 外层中灰底 + 深色面板 / 柔靛蓝 */
 html[data-theme="noir"]{
   color-scheme:dark;
-  --bg:#e8e8ed;
+  --bg:#a8a8b4;
   --bg2:#0c0c0f;
   --panel:#121216;
   --panel2:#0e0e12;
@@ -3023,8 +3023,8 @@ html[data-theme="noir"]{
   --grid:#1c1c24;
   --glow:rgba(129,140,248,.10);
   --header-glow:linear-gradient(90deg,rgba(129,140,248,.08),transparent 65%);
-  /* 最外层页面底：淡灰（卡片/面板仍保持深色） */
-  --body-bg:#e8e8ed;
+  /* 最外层页面底：中灰（卡片/面板仍保持深色） */
+  --body-bg:#a8a8b4;
 }
 
 /* overrides: 墨夜 — 哑光流行暗色 */
@@ -3837,7 +3837,7 @@ textarea:focus{border-color:var(--accent)}
 .theme-opt .desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
 .theme-opt[data-id="default"]{--sw1:#0b1220;--sw2:#3b82f6;--sw3:#34d399}
 .theme-opt[data-id="cyber"]{--sw1:#f3ead4;--sw2:#8b6914;--sw3:#6b7c3a}
-.theme-opt[data-id="noir"]{--sw1:#e8e8ed;--sw2:#818cf8;--sw3:#121216}
+.theme-opt[data-id="noir"]{--sw1:#a8a8b4;--sw2:#818cf8;--sw3:#121216}
 .theme-opt[data-id="glass"]{--sw1:#0a1024;--sw2:#7dd3fc;--sw3:#a5b4fc}
 .theme-opt[data-id="paper"]{--sw1:#f4f1f8;--sw2:#7c6bb5;--sw3:#0d9488}
 .theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#2563eb;--sw3:#d97706}

@@ -2989,20 +2989,20 @@ html[data-theme="cyber"] button.primary{color:#fffaf0}
 html[data-theme="cyber"] .nav a{color:var(--muted)}
 html[data-theme="cyber"] .nav a.active,html[data-theme="cyber"] .nav a:hover{color:var(--text);background:var(--hover)}
 
-/* theme token: 墨夜（noir）— 外层浅黑底 + 深色面板 / 柔靛蓝 */
+/* theme token: 墨夜（noir）— 外层更深底 + 中心面板稍浅 / 柔靛蓝 */
 html[data-theme="noir"]{
   color-scheme:dark;
-  --bg:#2a2a32;
-  --bg2:#0c0c0f;
-  --panel:#121216;
-  --panel2:#0e0e12;
-  --line:#23232b;
-  --line2:#1a1a21;
-  --border:#2e2e38;
+  --bg:#121218;
+  --bg2:#16161e;
+  --panel:#22222c;
+  --panel2:#1a1a22;
+  --line:#2e2e38;
+  --line2:#262630;
+  --border:#3a3a48;
   --text:#ececf1;
   --muted:#9898a6;
   --label:#c4c4d0;
-  --hover:#1a1a22;
+  --hover:#2a2a34;
   --accent:#818cf8;
   --accent2:#6366f1;
   --ok:#34d399;
@@ -3020,14 +3020,14 @@ html[data-theme="noir"]{
   --tx-soft:rgba(167,139,250,.88);
   --rx-fill:rgba(96,165,250,.14);
   --tx-fill:rgba(167,139,250,.12);
-  --grid:#1c1c24;
+  --grid:#262630;
   --glow:rgba(129,140,248,.10);
   --header-glow:linear-gradient(90deg,rgba(129,140,248,.08),transparent 65%);
-  /* 最外层页面底：浅黑（卡片/面板仍更深） */
-  --body-bg:#2a2a32;
+  /* 最外层更深；卡片/面板用稍浅的深灰抬起层次 */
+  --body-bg:#121218;
 }
 
-/* overrides: 墨夜 — 哑光流行暗色 */
+/* overrides: 墨夜 — 哑光流行暗色（外深内浅） */
 html[data-theme="noir"] button.primary,
 html[data-theme="noir"] .seg button.active{
   background:#6366f1;
@@ -3055,8 +3055,8 @@ html[data-theme="noir"] .settings-form select,
 html[data-theme="noir"] .settings-form textarea,
 html[data-theme="noir"] textarea,
 html[data-theme="noir"] .seg button{
-  background:#121216;
-  border-color:#2e2e38;
+  background:#1a1a22;
+  border-color:#3a3a48;
   color:var(--text);
   box-shadow:none;
 }
@@ -3064,16 +3064,16 @@ html[data-theme="noir"] .seg button.active{
   background:#6366f1;border-color:#818cf8;color:#fff;
 }
 html[data-theme="noir"] header{
-  background:#0c0c0f;border-bottom-color:#23232b;box-shadow:none;
+  background:#16161e;border-bottom-color:#2e2e38;box-shadow:none;
 }
 html[data-theme="noir"] .card,
 html[data-theme="noir"] .panel,
 html[data-theme="noir"] .settings-card,
 html[data-theme="noir"] .settings-shell,
 html[data-theme="noir"] .modal{
-  background:#121216;
-  border-color:#23232b;
-  box-shadow:0 1px 0 rgba(255,255,255,.03),0 8px 22px rgba(0,0,0,.35);
+  background:#22222c;
+  border-color:#2e2e38;
+  box-shadow:0 1px 0 rgba(255,255,255,.04),0 8px 22px rgba(0,0,0,.28);
 }
 html[data-theme="noir"] .status-pill.on{
   color:#6ee7b7;background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.28);
@@ -3837,7 +3837,7 @@ textarea:focus{border-color:var(--accent)}
 .theme-opt .desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
 .theme-opt[data-id="default"]{--sw1:#0b1220;--sw2:#3b82f6;--sw3:#34d399}
 .theme-opt[data-id="cyber"]{--sw1:#f3ead4;--sw2:#8b6914;--sw3:#6b7c3a}
-.theme-opt[data-id="noir"]{--sw1:#2a2a32;--sw2:#818cf8;--sw3:#121216}
+.theme-opt[data-id="noir"]{--sw1:#121218;--sw2:#818cf8;--sw3:#22222c}
 .theme-opt[data-id="glass"]{--sw1:#0a1024;--sw2:#7dd3fc;--sw3:#a5b4fc}
 .theme-opt[data-id="paper"]{--sw1:#f4f1f8;--sw2:#7c6bb5;--sw3:#0d9488}
 .theme-opt[data-id="prairie"]{--sw1:#f3f7f1;--sw2:#2563eb;--sw3:#d97706}

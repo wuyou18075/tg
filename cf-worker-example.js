@@ -7441,7 +7441,7 @@ async function saveConfig() {
 
 // ─── 获取流量（签名推送到各 VPS 回调） ───
 let forcePollTimer = null;
-let forceTrack = null; // { force_at, rows:[{machine_id,state,status,detail,reported,last_ts}] }
+let forceTrack = null; // { force_at, rows, baseline:{mid:{ts,updated_at}}, started_at }
 
 function reasonLabel(state, detail, status) {
   if (state === "pushed") return "回调已接受";
@@ -7504,13 +7504,23 @@ function openForceResult(data) {
       ...skip.map((x) => ({ machine_id: x.machine_id, state: "skipped", status: 0, detail: x.reason || "", reported: false, abandoned: false, last_ts: 0 })),
     ];
   }
-  forceTrack = { force_at: forceAt, rows };
+  // 推送前基线：用当前列表快照。判定「已上报」优先看服务端收包时间 updated_at，
+  // 避免 VPS 本地时钟偏慢导致 last_ts < force_at 被误判超时。
+  const baseline = {};
+  for (const m of machines || []) {
+    if (!m || !m.machine_id) continue;
+    baseline[m.machine_id] = {
+      ts: Number(m.ts) || 0,
+      updated_at: Number(m.updated_at) || 0,
+    };
+  }
+  forceTrack = { force_at: forceAt, rows, baseline, started_at: Date.now() };
   document.getElementById("forceResultTitle").textContent = "获取流量结果";
   document.getElementById("forceResultDesc").textContent =
     data.message || ("推送完成：成功 " + (data.accepted || 0) + " / 失败 " + (data.failed || 0) + " / 跳过 " + (data.skipped || 0));
   const pendingN = rows.filter((r) => r.state === "pushed").length;
   document.getElementById("forceResultNote").textContent = pendingN
-    ? "推送成功表示回调已收到；列表时间等实际上报。每 2 秒刷新；全部成功立即停，最多 30 秒后舍弃未上报机器并停止。"
+    ? "推送成功表示回调已收到；列表时间等实际上报。约每 3 秒刷新；全部成功立即停，最多 30 秒后舍弃未上报机器并停止。"
     : "没有可等待上报的机器（全部跳过或推送失败），无需自动刷新。";
   document.getElementById("forceResultModal").classList.add("open");
   renderForceResult();
@@ -7586,6 +7596,23 @@ function closeForceResult() {
   if (forcePollTimer) { clearTimeout(forcePollTimer); forcePollTimer = null; }
 }
 
+/** 强制上报后是否算「已上报」：优先服务端收包时间，兼容 VPS 时钟偏差 */
+function forceReportSucceeded(m, forceAt, base) {
+  if (!m) return false;
+  const ts = Number(m.ts) || 0;
+  const upd = Number(m.updated_at) || 0;
+  const baseTs = base ? (Number(base.ts) || 0) : 0;
+  const baseUpd = base ? (Number(base.updated_at) || 0) : 0;
+  // 1) Worker 实际收到上报（updated_at 用服务端时钟，与 force_at 同源）
+  if (upd >= forceAt) return true;
+  // 2) 相对推送前基线：有新上报即可（哪怕 VPS 时钟慢导致 ts < force_at）
+  if (upd > baseUpd && baseUpd > 0) return true;
+  if (ts > baseTs && baseTs > 0) return true;
+  // 3) 兜底：VPS 时钟准且无基线时
+  if (ts >= forceAt) return true;
+  return false;
+}
+
 function startForcePoll() {
   if (forcePollTimer) { clearTimeout(forcePollTimer); forcePollTimer = null; }
   if (!forceTrack) return;
@@ -7594,7 +7621,8 @@ function startForcePoll() {
   if (!needWait) return;
 
   let n = 0;
-  const max = 6; // 最多约 18s，且只刷列表（不打 history/tg）
+  const maxMs = 30000; // 真正等满约 30s（首轮 2s + 之后每 3s）
+  const startedAt = forceTrack.started_at || Date.now();
   const tick = async () => {
     n++;
     try {
@@ -7604,13 +7632,13 @@ function startForcePoll() {
         return;
       }
       const byId = new Map(machines.map((m) => [m.machine_id, m]));
+      const baseMap = forceTrack.baseline || {};
       for (const r of forceTrack.rows) {
         if (r.state !== "pushed" || r.reported) continue;
         const m = byId.get(r.machine_id);
-        const ts = m ? (Number(m.ts) || 0) : 0;
-        if (ts >= forceTrack.force_at) {
+        if (forceReportSucceeded(m, forceTrack.force_at, baseMap[r.machine_id])) {
           r.reported = true;
-          r.last_ts = ts;
+          r.last_ts = m ? (Number(m.ts) || Number(m.updated_at) || 0) : 0;
         }
       }
       renderForceResult();
@@ -7621,8 +7649,8 @@ function startForcePoll() {
         forcePollTimer = null;
         return; // 全部成功 → 立即停止，不再空转
       }
-      if (n >= max) {
-        // 最多 30 秒：未上报的机器直接舍弃，不再刷新
+      const remainMs = maxMs - (Date.now() - startedAt);
+      if (remainMs <= 0) {
         for (const r of forceTrack.rows) {
           if (r.state === "pushed" && !r.reported) r.abandoned = true;
         }
@@ -7631,7 +7659,7 @@ function startForcePoll() {
         forcePollTimer = null;
         return;
       }
-      note.textContent = "等待上报中… 剩余 " + pending + " 台 · 已刷新 " + n + " 次 · 最多 " + Math.max(0, (max - n) * 2) + " 秒后舍弃未上报";
+      note.textContent = "等待上报中… 剩余 " + pending + " 台 · 已刷新 " + n + " 次 · 约 " + Math.ceil(remainMs / 1000) + " 秒后舍弃未上报";
     } catch (e) { /* ignore poll errors */ }
     // 仅在仍有待上报时继续
     if (forceTrack && forceTrack.rows.some((r) => r.state === "pushed" && !r.reported && !r.abandoned)) {

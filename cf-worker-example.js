@@ -4721,13 +4721,9 @@ function readSpan(selId, mode) {
   const p = chartPreset(mode);
   const el = document.getElementById(selId);
   if (mode === "hour") {
-    // 优先读下拉框当前值，再回退 localStorage / 今天
+    // 日内：只认当前下拉框；无值则今天。不读历史偏好，避免日报粘在旧日期
     const fromSel = normalizeDayStr(el ? el.value : "");
     if (fromSel) return fromSel;
-    try {
-      const saved = normalizeDayStr(localStorage.getItem("dash_chart_day_hour") || "");
-      if (saved) return saved;
-    } catch {}
     return shanghaiTodayStr();
   }
   const v = el ? Number(el.value) : NaN;
@@ -4883,14 +4879,16 @@ function collectUiPrefs() {
   };
   try {
     prefs.chart_span_hour = "24";
-    prefs.chart_day_hour = localStorage.getItem("dash_chart_day_hour") || shanghaiTodayStr();
+    // 日报日期不记偏好：云端/本地始终记「今天」，避免跨日仍回到旧日期
+    prefs.chart_day_hour = shanghaiTodayStr();
     prefs.chart_span_week = localStorage.getItem("dash_chart_span_week") || "7";
     prefs.chart_span_month = localStorage.getItem("dash_chart_span_month") || "31";
     prefs.chart_span_year = localStorage.getItem("dash_chart_span_year") || "12";
   } catch {}
   if (r && r.value) {
     if (chartMode === "hour") {
-      prefs.chart_day_hour = String(r.value);
+      // 同上：不把用户临时选中的历史日写入偏好
+      prefs.chart_day_hour = shanghaiTodayStr();
     } else {
       const key = "chart_span_" + (chartMode || "week");
       if (prefs[key] != null) prefs[key] = String(r.value);
@@ -4913,7 +4911,8 @@ function writeUiPrefsLocal(prefs) {
       const k = "chart_span_" + m;
       if (prefs[k] != null) localStorage.setItem("dash_chart_span_" + m, String(prefs[k]));
     }
-    if (prefs.chart_day_hour) localStorage.setItem("dash_chart_day_hour", String(prefs.chart_day_hour));
+    // 日报始终落到今天，忽略云端/旧本地里的历史 day
+    try { localStorage.setItem("dash_chart_day_hour", shanghaiTodayStr()); } catch {}
     if (prefs.chart_rx != null) localStorage.setItem("dash_chart_rx", prefs.chart_rx === "0" ? "0" : "1");
     if (prefs.chart_tx != null) localStorage.setItem("dash_chart_tx", prefs.chart_tx === "0" ? "0" : "1");
     if (prefs.filter_online != null) localStorage.setItem("dash_filter_online", prefs.filter_online === "1" ? "1" : "0");
@@ -5768,18 +5767,16 @@ function fillRangeOptions(sel, mode) {
   sel.replaceChildren();
   if (mode === "hour") {
     // 日内：选上海自然日，不跨日
+    // 日报不记忆历史日期偏好：每次进入/刷新始终默认「今天」（用户可在当次会话内改选）
     const opts = hourDayOptions();
-    let prefer = null;
-    try { prefer = normalizeDayStr(localStorage.getItem("dash_chart_day_hour") || ""); } catch { /* ignore */ }
     const today = shanghaiTodayStr();
-    const cur = (prefer && opts.some(x => x[0] === prefer)) ? prefer : today;
+    const cur = opts.some(x => x[0] === today) ? today : (opts[0] ? opts[0][0] : today);
     for (const [v, t] of opts) {
       const o = document.createElement("option");
       o.value = v; o.textContent = t;
       sel.appendChild(o);
     }
     sel.value = cur;
-    // 写回规范化日期，避免下次读到脏值
     try { localStorage.setItem("dash_chart_day_hour", cur); } catch {}
     return;
   }
